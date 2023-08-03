@@ -1,4 +1,5 @@
 import numpy as np
+from primitives.parameters import ParameterInterface
 
 # General linear algebra operation implementations:
 
@@ -13,3 +14,21 @@ def invert_covariance(cov, alpha=1e-9):
     # Invert the upper triangular matrix using backward substitutions
     cov_inv = np.dot(Linv.T, Linv)
     return cov_inv
+
+
+# Parameterised linear algebra operator classes:
+
+class LinearOperator(ParameterInterface):
+    parameter_keys = ["shape"]
+
+    def get_parameter_values(self):
+        parameters = super().get_parameter_values()
+        # Remove the shape key as it will not be changed after initialisation.
+        del parameters["shape"]
+        return parameters
+
+    def compute_matrix(self, dt):
+        pass
+
+    def __call__(self, dt=None):
+        return self.compute_matrix(dt=dt)
