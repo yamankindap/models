@@ -86,4 +86,4 @@ class ParameterInterface:
 
         for schema_key in schema.keys():
 
-            assert schema[schema_key] == new_schema[schema_key]
+            assert schema[schema_key] == new_schema[schema_key], f"schema_key is {schema_key}."
