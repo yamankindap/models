@@ -174,6 +174,68 @@ class h_vector(LinearOperator):
         h = np.zeros(self.shape)
         h[self.indicator_dim[0]][self.indicator_dim[1]] = self.value
         return h
+    
+
+# Constant velocity model definitions:
+
+## Linear operators for the Constant velocity model
+
+class expA_ConstantVelocity(LinearOperator):
+    parameter_keys = ["shape"]
+
+    def compute_matrix(self, dt):
+        expA = np.zeros(self.shape)
+        expA[0][0] = 1.
+        expA[0][1] = dt
+        expA[1][1] = 1.
+        return expA
+
+## Constant velocity model object:
+
+## The only significant difference of this object from NVMLangevinModel is self.expA. There may be a better way to implement this.
+
+class NVMConstantVelocityModel(BaseStateSpaceModel):
+
+    def __init__(self, subordinator, mu=0., sigma=1., sigma_eps=0.1, shape=(2,1)):
+
+        # State-space model attributes:
+        self.expA = expA_ConstantVelocity(**{"shape":(shape[0], shape[0])})
+        self.h = h_vector(shape=(shape[0], 1))
+        self.ft = lambda dt: self.expA(dt) @ self.h()
+
+        # System noise
+        # This will be changed for Levy processes:
+        # system_noise = BrownianMotion(**{"shape":(1,1), "sigma":1.})
+
+        # def tmp(s, t):
+        #     return self.ft(t-s) @ system_noise(s=s, t=t)
+
+        # System noise
+        system_noise = NormalVarianceMeanProcess(**{"shape":(1,1), "mu":mu, "sigma":sigma, "subordinator":subordinator})
+        system_noise.set_ssm_attributes(h=self.h, ft=self.ft, expA=self.expA)
+
+        # Observation model
+        H = np.zeros((1,2))
+        H[0][0] = 1
+
+        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(1,1), "sigma_eps":sigma_eps})}
+        super().__init__(**config)
+
+    def get_parameter_values(self):
+        return self.I.get_parameter_values() | self.eps.get_parameter_values()
+    
+    def set_parameter_values(self, **kwargs):
+        self.expA.set_parameter_values(**kwargs)
+
+    def sample(self, times, size=1):
+        # Initialise the subordinator jumps
+        low = np.min(times)
+        high = np.max(times)
+        self.I.subordinator.initialise_proposal_samples(low=low, high=high)
+
+        x, y = super().sample(times=times, size=size)
+
+        return x, y
 
 
 # Langevin model definitions:
