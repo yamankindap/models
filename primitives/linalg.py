@@ -24,8 +24,7 @@ class LinearOperator(ParameterInterface):
     def get_parameter_values(self):
         parameters = super().get_parameter_values()
         # Remove the shape key as it will not be changed after initialisation.
-        del parameters["shape"]
-        return parameters
+        return {key: value for key, value in parameters.items() if key not in ["shape"]}
 
     def compute_matrix(self, dt):
         pass

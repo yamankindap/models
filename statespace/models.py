@@ -13,8 +13,7 @@ class ForcingFunction(ParameterInterface):
     def get_parameter_values(self):
         parameters = super().get_parameter_values()
         # Remove the shape key as it will not be changed after initialisation.
-        del parameters["shape"]
-        return parameters
+        return {key: value for key, value in parameters.items() if key not in ["shape"]}
 
     def sample(self, s=None, t=None):
         pass
@@ -80,8 +79,7 @@ class Noise(ParameterInterface):
     def get_parameter_values(self):
         parameters = super().get_parameter_values()
         # Remove the shape key as it will not be changed after initialisation.
-        del parameters["shape"]
-        return parameters
+        return {key: value for key, value in parameters.items() if key not in ["shape"]}
 
     def sample(self, t=None):
         pass
@@ -92,9 +90,11 @@ class Noise(ParameterInterface):
 class GaussianNoise(Noise):
     parameter_keys = ["shape", "sigma_eps"]
 
+    def covariance(self):
+        return self.sigma_eps**2 * np.ones((self.shape[0], self.shape[1]))
+
     def sample(self, t=None):
         return self.sigma_eps * np.random.randn(self.shape[0], self.shape[1])
-
 
 
 # Base State space model object:
