@@ -1,6 +1,5 @@
 import numpy as np
 
-from primitive.parameters import ParameterInterface
 from primitive.linalg import LinearOperator
 
 from stochastic.integrals import NormalVarianceMeanProcessDrivenIntegral
@@ -112,13 +111,6 @@ class NVMConstantVelocityModel(BaseStateSpaceModel):
         self.h = h_vector(shape=(shape[0], 1))
         self.ft = lambda dt: self.expA(dt) @ self.h()
 
-        # System noise
-        # This will be changed for Levy processes:
-        # system_noise = BrownianMotion(**{"shape":(1,1), "sigma":1.})
-
-        # def tmp(s, t):
-        #     return self.ft(t-s) @ system_noise(s=s, t=t)
-
         # System noise
         system_noise = NormalVarianceMeanProcessDrivenIntegral(**{"shape":(1,1), "mu":mu, "sigma":sigma, "subordinator":subordinator})
         system_noise.set_ssm_attributes(h=self.h, ft=self.ft, expA=self.expA)
@@ -171,13 +163,6 @@ class NVMLangevinModel(BaseStateSpaceModel):
         self.expA = expA_Langevin(**{"shape":(shape[0], shape[0]), "theta":theta})
         self.h = h_vector(shape=(shape[0], 1))
         self.ft = lambda dt: self.expA(dt) @ self.h()
-
-        # System noise
-        # This will be changed for Levy processes:
-        # system_noise = BrownianMotion(**{"shape":(1,1), "sigma":1.})
-
-        # def tmp(s, t):
-        #     return self.ft(t-s) @ system_noise(s=s, t=t)
 
         # System noise
         system_noise = NormalVarianceMeanProcessDrivenIntegral(**{"shape":(1,1), "mu":mu, "sigma":sigma, "subordinator":subordinator})

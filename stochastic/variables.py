@@ -22,7 +22,7 @@ class GaussianNoise(Noise):
     parameter_keys = ["shape", "sigma_eps"]
 
     def covariance(self):
-        return self.sigma_eps**2 * np.ones((self.shape[0], self.shape[1]))
+        return self.sigma_eps**2 * np.eye(self.shape[0])
 
     def sample(self, t=None):
         return self.sigma_eps * np.random.randn(self.shape[0], self.shape[1])
