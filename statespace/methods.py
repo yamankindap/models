@@ -1,6 +1,6 @@
 import numpy as np
-from primitives.linalg import invert_covariance
-from primitives.methods import InferenceModule
+from primitive.linalg import invert_covariance
+from primitive.methods import InferenceModule
 
 class KalmanFilter(InferenceModule):
 

@@ -1,101 +1,10 @@
 import numpy as np
 
-from primitives.parameters import ParameterInterface
-from primitives.linalg import LinearOperator
+from primitive.parameters import ParameterInterface
+from primitive.linalg import LinearOperator
 
-
-
-# Forcing function objects:
-
-class ForcingFunction(ParameterInterface):
-    parameter_keys = None
-
-    def get_parameter_values(self):
-        parameters = super().get_parameter_values()
-        # Remove the shape key as it will not be changed after initialisation.
-        return {key: value for key, value in parameters.items() if key not in ["shape"]}
-
-    def sample(self, s=None, t=None):
-        pass
-
-    def __call__(self, s=None, t=None):
-        return self.sample(s=s, t=t)
-    
-class BrownianMotion(ForcingFunction):
-    parameter_keys = ["shape", "sigma"]
-
-    def sample(self, s=None, t=None):
-        dW = np.sqrt(t - s) * self.sigma * np.random.randn(self.shape[0], self.shape[1])
-        return dW
-    
-
-class NormalVarianceMeanProcess(ForcingFunction):
-    parameter_keys = ["shape", "mu", "sigma"]
-
-    def __init__(self, **kwargs):
-        # Set parameters using the ParameterInterface class.
-        super().__init__(**kwargs)
-
-        self.subordinator = kwargs.get("subordinator", None)
-        if self.subordinator is None:
-            self.process = kwargs.get("process", None)
-
-            if self.process is None:
-                raise ValueError("The forcing function is not initialised. Arguments must contain a subordinator or a process.")
-    
-    def sample(self, s=None, t=None):
-        mean, cov = self.conditional_moments(s, t)
-        dW = np.random.multivariate_normal(mean=mean.flatten(), cov=cov, size=1).T
-        return dW
-    
-    def set_ssm_attributes(self, h, ft, expA):
-        # Create/modify instance parameters named after the key and stores value.
-        setattr(self, "h", h)
-        setattr(self, "ft", ft)
-        setattr(self, "expA", expA)
-
-    def conditional_moments(self, s, t):
-        mask = (s < self.subordinator.t_series) & (self.subordinator.t_series <= t)
-        x_series = self.subordinator.x_series[mask]
-        t_series = self.subordinator.t_series[mask]
-
-        mean = np.zeros(self.h.shape)
-        for i in range(x_series.size):
-            mean += self.ft(t-t_series[i]) @ np.array([[self.mu]]) @ np.array([[x_series[i]]])
-
-        cov = np.zeros(self.expA.shape)
-        for i in range(x_series.size):
-            mat = self.ft(t-t_series[i])
-            cov += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i]]])
-
-        return mean, cov
-    
-
-# Measurement noise objects:
-
-class Noise(ParameterInterface):
-    parameter_keys = None
-
-    def get_parameter_values(self):
-        parameters = super().get_parameter_values()
-        # Remove the shape key as it will not be changed after initialisation.
-        return {key: value for key, value in parameters.items() if key not in ["shape"]}
-
-    def sample(self, t=None):
-        pass
-
-    def __call__(self, t=None):
-        return self.sample(t=t)
-    
-class GaussianNoise(Noise):
-    parameter_keys = ["shape", "sigma_eps"]
-
-    def covariance(self):
-        return self.sigma_eps**2 * np.ones((self.shape[0], self.shape[1]))
-
-    def sample(self, t=None):
-        return self.sigma_eps * np.random.randn(self.shape[0], self.shape[1])
-
+from stochastic.integrals import NormalVarianceMeanProcessDrivenIntegral
+from stochastic.variables import GaussianNoise
 
 # Base State space model object:
 
@@ -211,7 +120,7 @@ class NVMConstantVelocityModel(BaseStateSpaceModel):
         #     return self.ft(t-s) @ system_noise(s=s, t=t)
 
         # System noise
-        system_noise = NormalVarianceMeanProcess(**{"shape":(1,1), "mu":mu, "sigma":sigma, "subordinator":subordinator})
+        system_noise = NormalVarianceMeanProcessDrivenIntegral(**{"shape":(1,1), "mu":mu, "sigma":sigma, "subordinator":subordinator})
         system_noise.set_ssm_attributes(h=self.h, ft=self.ft, expA=self.expA)
 
         # Observation model
@@ -271,7 +180,7 @@ class NVMLangevinModel(BaseStateSpaceModel):
         #     return self.ft(t-s) @ system_noise(s=s, t=t)
 
         # System noise
-        system_noise = NormalVarianceMeanProcess(**{"shape":(1,1), "mu":mu, "sigma":sigma, "subordinator":subordinator})
+        system_noise = NormalVarianceMeanProcessDrivenIntegral(**{"shape":(1,1), "mu":mu, "sigma":sigma, "subordinator":subordinator})
         system_noise.set_ssm_attributes(h=self.h, ft=self.ft, expA=self.expA)
 
         # Observation model

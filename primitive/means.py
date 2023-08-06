@@ -1,6 +1,6 @@
 import numpy as np
 
-from primitives.parameters import ParameterInterface
+from primitive.parameters import ParameterInterface
 
 # Base mean function class:
 

@@ -2,7 +2,7 @@ import numpy as np
 from scipy.special import gamma as gammafnc
 from scipy.special import kv
 
-from primitives.parameters import ParameterInterface
+from primitive.parameters import ParameterInterface
 
 # Base kernel function class:
 

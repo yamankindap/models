@@ -1,5 +1,5 @@
 import numpy as np
-from primitives.linalg import invert_covariance
+from primitive.linalg import invert_covariance
 
 # Specific probabilistic model class:
 
