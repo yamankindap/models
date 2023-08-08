@@ -114,7 +114,7 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
                                                                      }
                                 ]
         
-        self.iterature_log_evidence = [log_likelihood]
+        self.iteration_log_evidence = [log_likelihood]
 
 
     def kalman_iteration(self, y, x_init, P_init, s, t, t_series, x_series):
@@ -139,7 +139,17 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
         log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[0] * np.log(2 * np.pi))
 
         return x_est, P_est, log_marginal_likelihood
+    
+    def get_mixture_moments(self):
+        means = np.array([sample['mean'] for sample in self.iteration_history])
+        post_mix_mean = means.mean(axis=0)
 
+        residual_mean = (means - post_mix_mean)
+        mixture_adjustment = residual_mean @ np.transpose(residual_mean, axes=(0,2,1))
+
+        post_mix_cov = (np.array([sample['cov'] for sample in self.iteration_history]) + mixture_adjustment).mean(axis=0)
+
+        return post_mix_mean, post_mix_cov
 
     def filter(self, times, y, x_init, P_init, n_samples=10):
 
@@ -174,14 +184,16 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
                                                                             )
             
 
-                acceptance_prob = np.min([1, np.exp(proposed_log_likelihood[0][0] - self.iterature_log_evidence[-1][0][0])])
+                acceptance_prob = np.min([1, np.exp(proposed_log_likelihood[0][0] - self.iteration_log_evidence[-1][0][0])])
                 u = np.random.uniform(low=0.0, high=1.0)
 
                 if u < acceptance_prob:
                     self.model.I.subordinator.set_proposal_samples(proposal_t_series, proposal_x_series)
-                    self.x_est[i+1] = proposed_x_est
-                    self.P_est[i+1] = proposed_P_est
-                    self.iterature_log_evidence.append(proposed_log_likelihood)
+
+                    # Instead of setting the value of self.x_est and self.P_est here, set them after the inner iterations are complete and use the mixture-of-Gaussians.
+                    #self.x_est[i+1] = proposed_x_est
+                    #self.P_est[i+1] = proposed_P_est
+                    self.iteration_log_evidence.append(proposed_log_likelihood)
                     self.iteration_history.append(self.model.get_parameter_values() | {"time":t, 
                                                                                        "mean":proposed_x_est, 
                                                                                        "cov":proposed_P_est, 
@@ -190,10 +202,12 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
                                                                                       }
                                                  )
                 else:
-                    self.iterature_log_evidence.append(self.iterature_log_evidence[-1])
+                    self.iteration_log_evidence.append(self.iteration_log_evidence[-1])
                     self.iteration_history.append(self.iteration_history[-1])
 
-            self.log_evidence.append(self.iterature_log_evidence)
+            self.x_est[i+1], self.P_est[i+1] = self.get_mixture_moments()
+
+            self.log_evidence.append(self.iteration_log_evidence)
             self.history.append(self.iteration_history)
 
         return self.history
