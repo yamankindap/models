@@ -64,3 +64,19 @@ class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
             cov += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i]]])
 
         return mean, cov
+    
+    def proposed_conditional_moments(self, s, t, t_series, x_series):
+        mask = (s < t_series) & (t_series <= t)
+        x_series = x_series[mask]
+        t_series = t_series[mask]
+
+        mean = np.zeros(self.h.shape)
+        for i in range(x_series.size):
+            mean += self.ft(t-t_series[i]) @ np.array([[self.mu]]) @ np.array([[x_series[i]]])
+
+        cov = np.zeros(self.expA.shape)
+        for i in range(x_series.size):
+            mat = self.ft(t-t_series[i])
+            cov += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i]]])
+
+        return mean, cov
