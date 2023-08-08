@@ -1,5 +1,5 @@
 import numpy as np
-from primitives.parameters import ParameterInterface
+from primitive.parameters import ParameterInterface
 
 # General linear algebra operation implementations:
 

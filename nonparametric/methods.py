@@ -1,8 +1,8 @@
 import numpy as np
-from primitives.priors import PriorModule
-from primitives.proposals import ProposalModule
+from primitive.priors import PriorModule
+from primitive.proposals import ProposalModule
 
-from primitives.methods import InferenceModule
+from primitive.methods import InferenceModule
 
 
 # Gaussian process Metropolis-Within-Gibbs sampler for kernel parameters.

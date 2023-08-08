@@ -1,5 +1,5 @@
-from primitives.priors import PriorModule
-from primitives.proposals import ProposalModule
+from primitive.priors import PriorModule
+from primitive.proposals import ProposalModule
 
 # Base inference module class:
 
