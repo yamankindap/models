@@ -2,13 +2,25 @@ import numpy as np
 from primitive.linalg import invert_covariance
 from primitive.methods import InferenceModule
 
+# Base Kalman filtering class:
+
 class KalmanFilter(InferenceModule):
 
     def set_state_dims(self, D):
+        """This method creates an instance attribute D that represents the number of dimensions of the state. 
+
+        This is required in general for initialisation of variable arrays containing mean vectors and covariance matrices at times t.
+        """
         self.D = D
 
     def initialise(self):
+        """This method initialises the instance history attribute history which contains the results of the estimation method.
 
+        The history attribute is a list of iteration history variables. An iteration may refer to any computation that involves a change
+        in time or a change in model parameters for a fixed time interval.
+
+        Additionally, the instance attributes that represent the mean x_est, covariance P_est and log_evidence are created for ease of operation.
+        """
         # Initialise sampling history:
         self.history = []
 
@@ -19,13 +31,32 @@ class KalmanFilter(InferenceModule):
         self.log_evidence = []
 
     def initialise_iteration(self, t, x_init, P_init):
+        """This method initialises an iteration history attribute and sets the initial point given by a time t, mean vector x_init and covariance matrix P_init. 
 
+        An iteration may refer to any computation that involves a change in time for fixed model parameters or a change in model parameters for a fixed time interval.
+
+        The iteration history is a list of dictionaries of model parameters, time, mean vector and covariance matrix associated with separate time points t and
+        particles, i.e. an iteration may be index by time and particle id. 
+        
+        At the start of each iteration the iteration memory attribute is reset. Thus, it should be appended to the history attribute before this line.
+
+        When inheriting from this class, the child class can extend the dictionary key words to include other variables. These should also be made arguments for
+        the method. In the future, we can automate this copy/paste operation by implementing the method using kwargs.
+        """
         # Initialise iteration history:
         self.iteration_history = []
         self.iteration_history.append(self.model.get_parameter_values() | {"time":t, "mean":x_init, "cov":P_init})
 
+    #### DEVNOTE #### t_series, x_series in Levy models are considered parameters of our model.
     def kalman_iteration(self, y, x_init, P_init, s, t):
+        """This method implements the prediction and correction steps of a Kalman filter iteration and returns the resulting mean vector x_est, covariance matrix P_est
+        and log_likelihood.
 
+        The associated matrices for the state transition A, state noise covariance Q, observation matrix H and observation noise covariance are computed using the
+        model object. This implicitly assumes that no change in model parameters is made during this iteration.
+
+        Additional changes in model parameters may be used in the Kalman iteration by extending this function.
+        """
         A = self.model.expA(t-s)
         noise_mean, Q = self.model.I.conditional_moments(s=s, t=t)
 
@@ -48,6 +79,11 @@ class KalmanFilter(InferenceModule):
         return x_est, P_est, log_marginal_likelihood
     
     def kalman_sweep(self):
+        """This method implements a full sweep of the given input-output data set for fixed model parameters. This may be required to compute the marginal
+        likelihood of the data set. The results will be appended to the iteration_history attribute.
+         
+        The iteration in this context represents a change in time for fixed model parameters.
+        """
 
         extended_times = np.vstack((self.X[0], self.X)) # This is required to include the prior on x_est(times=0)
         for i, t in enumerate(self.X, 0):
@@ -61,6 +97,8 @@ class KalmanFilter(InferenceModule):
             self.iteration_history.append(self.model.get_parameter_values() | {"time":self.X[i], "mean":self.x_est[i+1], "cov":self.P_est[i+1]})
 
     def filter(self, times, y, x_init, P_init):
+        """This method is the default filtering functionality for changes in time with fixed model parameters.
+        """
 
         # Set training variables:
         self.set_training_variables(y=y, X=times, Xeval=None)

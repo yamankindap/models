@@ -3,6 +3,14 @@ from primitive.proposals import ProposalModule
 
 # Base inference module class:
 
+
+#############
+# DEV NOTES #
+#############
+# The key-value structure of the parameters is reflected nicely in the class. Some basic tests for matching the model parameters is implemented.
+# The general API of the model object is not sufficiently specificed. We know that it must possess a .get_parameter_values() method. There is no other dependence at this stage.
+# It looks like set_training_variables method is not necessary at this abstract stage.
+
 class InferenceModule:
 
     def __init__(self, model, prior, proposal):
@@ -25,8 +33,8 @@ class InferenceModule:
         self.proposal = proposal
 
         # Check if each parameter has an associated PriorModule and ProposalModule.
-        self.valid = self.validate_prior() and self.validate_proposal()
         # Check if prior and proposal keys match parameter keys.
+        self.valid = self.validate_prior() and self.validate_proposal()
 
     def validate_prior(self):
         """There are two types of priors in an InferenceModule: the prior may be a PriorModule object or the prior may be a dictionary of PriorModule objects associated
