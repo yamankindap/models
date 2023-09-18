@@ -14,7 +14,7 @@ class KalmanFilter(InferenceModule):
         self.D = D
 
     def initialise(self):
-        """This method initialises the instance history attribute history which contains the results of the estimation method.
+        """This method initialises the instance history attribute which contains the results of the estimation method.
 
         The history attribute is a list of iteration history variables. An iteration may refer to any computation that involves a change
         in time or a change in model parameters for a fixed time interval.
@@ -119,28 +119,44 @@ class KalmanFilter(InferenceModule):
         return self.history
 
 
-class MetropolisHastingsKalmanFilter(KalmanFilter):
+class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
 
     def initialise(self, x_init, P_init):
+        """This method performs two functions. 1) It initialises the instance history attribute which contains the results of the estimation method.
+        2) It initialises the subordinator jumps by generating random jump times and sizes.
 
+        In the future, there may be an option to specify the initial jumps directly as kwargs.
+
+        The history attribute is a list of iteration history variables. An iteration may refer to any computation that involves a change
+        in time or a change in model parameters for a fixed time interval.
+
+        Additionally, the instance attributes that represent the mean x_est, covariance P_est and log_evidence are created for ease of operation.
+        """
         # Initialise subordinator:
         low = self.X.min()
         high = self.X.max()
         self.model.I.subordinator.initialise_proposal_samples(low, high)
 
-        # Initialise sampling history:
-        self.history = []
-
-        # Initialise estimate attributes
-        self.x_est = np.zeros(shape=(self.y.shape[0]+1, self.D, 1))
-        self.P_est = np.zeros(shape=(self.y.shape[0]+1, self.D, self.D))
-        self.log_evidence = []
+        # Initialise history:
+        super().initialise()
 
         # Start iterations:
         self.x_est[0] = x_init
         self.P_est[0] = P_init
 
-    def initialise_iteration(self, t, x_init, P_init, log_likelihood):
+    def initialise_iteration(self, i, t, x_init, P_init):
+        """This method initialises an iteration history attribute and sets the initial point given by a time t, mean vector x_init, covariance matrix P_init and a log_likelihood. 
+
+        An iteration may refer to any computation that involves a change in time for fixed model parameters or a change in model parameters for a fixed time interval.
+
+        The iteration history is a list of dictionaries of model parameters, time, mean vector, covariance matrix, log likelihood and jumps associated with separate time points
+        t and particles, i.e. an iteration may be index by time and particle id. 
+        
+        At the start of each iteration the iteration memory attribute is reset. Thus, it should be appended to the history attribute before this line.
+        """
+
+        # Compute log_likelihood of the estimates:
+        log_likelihood = self.log_marginal_conditional_likelihood(y=self.y[i], x_est=x_init, P_est=P_init)
 
         # Initialise sampling history:
         self.iteration_history = [self.model.get_parameter_values() | {"time":t, 
@@ -154,9 +170,25 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
         
         self.iteration_log_evidence = [log_likelihood]
 
+    def log_marginal_conditional_likelihood(self, y, x_est, P_est):
+        # Compute the intermediate residual terms:
+        residual_pred = y - self.model.H @ x_est
+        residual_pred_cov = self.model.H @ P_est @ self.model.H.T + self.model.eps.covariance()
+
+        # Calculate log marginal likelihood:
+        log_det = np.linalg.slogdet(residual_pred_cov)[1]
+        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[0] * np.log(2 * np.pi))
+
+        return log_marginal_likelihood
+
 
     def kalman_iteration(self, y, x_init, P_init, s, t, t_series, x_series):
+        """This method implements the prediction and correction steps of a Kalman filter iteration given proposed jump times and sizes. It returns the resulting mean
+        vector x_est, covariance matrix P_est and log_likelihood. 
 
+        The associated matrices for the state transition A, state noise covariance Q, observation matrix H and observation noise covariance are computed using the
+        model object.
+        """
         A = self.model.expA(t - s)
         noise_mean, Q = self.model.I.proposed_conditional_moments(s, t, t_series, x_series)
 
@@ -178,18 +210,22 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
 
         return x_est, P_est, log_marginal_likelihood
     
-    def get_mixture_moments(self):
-        means = np.array([sample['mean'] for sample in self.iteration_history])
+    def iteration_Gaussian_mixture_moments(self, burn_in=0):
+        """This method computes the Gaussian mixture mean and covariance of the MCMC samples in the current iteration_history.
+        """
+        means = np.array([sample['mean'] for sample in self.iteration_history])[burn_in:]
         post_mix_mean = means.mean(axis=0)
 
         residual_mean = (means - post_mix_mean)
         mixture_adjustment = residual_mean @ np.transpose(residual_mean, axes=(0,2,1))
 
-        post_mix_cov = (np.array([sample['cov'] for sample in self.iteration_history]) + mixture_adjustment).mean(axis=0)
+        post_mix_cov = (np.array([sample['cov'] for sample in self.iteration_history])[burn_in:] + mixture_adjustment).mean(axis=0)
 
         return post_mix_mean, post_mix_cov
 
-    def filter(self, times, y, x_init, P_init, n_samples=10):
+    def filter(self, times, y, x_init, P_init, n_samples=10, burn_in=0):
+        """This method provides the filtering functionality for changes in time with each time interval estimated using MCMC samples.
+        """
 
         # Set training variables:
         self.set_training_variables(y=y, X=times, Xeval=None)
@@ -198,12 +234,12 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
         # Initialise history:
         self.initialise(x_init, P_init)
 
-        extended_times = np.vstack((self.X[0]-1, self.X)) # This is required to include the prior on x_est(times=0-1). The choice is arbitrary
+        extended_times = np.vstack((self.X[0]-1, self.X)) # This is required to include the prior on x_est(times=0-1). The choice of 1 reflects unit variance.
         for i, t in enumerate(times, 0):
             # Previous time step is s.
             s = extended_times[i]
 
-            self.initialise_iteration(t=t, x_init=self.x_est[i], P_init=self.P_est[i], log_likelihood=-10*np.ones((1, 1)))
+            self.initialise_iteration(i=i, t=t, x_init=self.x_est[i], P_init=self.P_est[i])
 
             # Start sampling:
             for _ in range(n_samples):
@@ -212,6 +248,7 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
                 proposal_t_series, proposal_x_series = self.model.I.subordinator.propose_subordinator((s,t))
 
                 # Filtering:
+                ## x_init and P_init are always set to the previous times filtering estimate.
                 proposed_x_est, proposed_P_est, proposed_log_likelihood = self.kalman_iteration(y=self.y[i],
                                                                                 x_init=self.x_est[i],
                                                                                 P_init=self.P_est[i],
@@ -226,11 +263,9 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
                 u = np.random.uniform(low=0.0, high=1.0)
 
                 if u < acceptance_prob:
+                    # Set subordinator using proposed jumps:
                     self.model.I.subordinator.set_proposal_samples(proposal_t_series, proposal_x_series)
 
-                    # Instead of setting the value of self.x_est and self.P_est here, set them after the inner iterations are complete and use the mixture-of-Gaussians.
-                    #self.x_est[i+1] = proposed_x_est
-                    #self.P_est[i+1] = proposed_P_est
                     self.iteration_log_evidence.append(proposed_log_likelihood)
                     self.iteration_history.append(self.model.get_parameter_values() | {"time":t, 
                                                                                        "mean":proposed_x_est, 
@@ -243,8 +278,10 @@ class MetropolisHastingsKalmanFilter(KalmanFilter):
                     self.iteration_log_evidence.append(self.iteration_log_evidence[-1])
                     self.iteration_history.append(self.iteration_history[-1])
 
-            self.x_est[i+1], self.P_est[i+1] = self.get_mixture_moments()
+            # Compute filtering estimate as a collapsed Gaussian:
+            self.x_est[i+1], self.P_est[i+1] = self.iteration_Gaussian_mixture_moments(burn_in=burn_in)
 
+            # Save log_evidence and iteration history:
             self.log_evidence.append(self.iteration_log_evidence)
             self.history.append(self.iteration_history)
 
