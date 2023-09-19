@@ -1,4 +1,5 @@
 import numpy as np
+
 from primitive.linalg import invert_covariance
 from primitive.methods import InferenceModule
 
