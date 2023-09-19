@@ -4,4 +4,7 @@ statespace/__pycache__
 nonparametric/__pycache__
 primitive/__pycache__
 
+.DS_Store
+experiments/.DS_Store
+
 project_summary.ipynb

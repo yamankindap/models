@@ -211,8 +211,51 @@ class expA_Langevin(LinearOperator):
         expA[0][1] = (np.exp(self.theta*dt) - 1) / self.theta
         expA[1][1] = np.exp(self.theta*dt)
         return expA
+    
+class Q_Langevin(LinearOperator):
+    parameter_keys = ["shape", "theta"]
+
+    def compute_matrix(self, dt):
+        Q = np.zeros(self.shape)
+        K = -1. * self.theta
+
+        Q[0][0] = ( dt - (2/K) * (1 - np.exp(self.theta*dt)) + (1/(2*K)) * (1 - np.exp(2*self.theta*dt)) ) / K**2
+        Q[0][1] = ( (1/K) * (1 - np.exp(self.theta*dt)) - (1/(2*K)) * (1 - np.exp(2*self.theta*dt)) ) / K
+        Q[1][0] = Q[0][1]
+        Q[1][1] = (1 - np.exp(2*self.theta*dt)) / (2*K)
+        return Q
 
 ## Langevin model object:
+
+class BrownianLangevinModel(BaseStateSpaceModel):
+
+    def __init__(self, theta, sigma=1., sigma_eps=0.1, shape=(2,1)):
+
+        # State-space model attributes:
+        self.expA = expA_Langevin(**{"shape":(shape[0], shape[0]), "theta":theta})
+        self.h = h_vector(shape=(shape[0], 1))
+        self.ft = lambda dt: self.expA(dt) @ self.h()
+        self.unit_Q = Q_Langevin(**{"shape":(shape[0], shape[0]), "theta":theta})
+
+        # System noise
+        system_noise = BrownianMotionDrivenIntegral(**{"shape":shape, "sigma":sigma, "type":"analytical"})
+        system_noise.set_unit_noise_covariance(Q=self.unit_Q)
+        
+        # Observation model
+        H = np.zeros((1,2))
+        H[0][0] = 1
+
+        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(1,1), "sigma_eps":sigma_eps})}
+        super().__init__(**config)
+
+    def get_parameter_values(self):
+        return self.expA.get_parameter_values() | self.I.get_parameter_values() | self.eps.get_parameter_values()
+    
+    def set_parameter_values(self, **kwargs):
+        self.expA.set_parameter_values(**kwargs)
+        self.I.set_parameter_values(**kwargs)
+        self.eps.set_parameter_values(**kwargs)
+
 
 class NVMLangevinModel(BaseStateSpaceModel):
 
