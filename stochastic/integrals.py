@@ -85,6 +85,12 @@ class BrownianMotionDrivenIntegral(BrownianMotion):
 
     def conditional_moments(self, s=None, t=None):
         return 0, self.sigma*self.Q(t-s)
+    
+    def likelihood(self, x_prime, x):
+        return 1/(np.sqrt(2*np.pi)*self.sigma) * np.exp( -0.5 * ((x_prime - x)/self.sigma)**2 )
+    
+    def log_likelihood(self, x_prime, x):
+        return -0.5 * ((x_prime - x)/self.sigma)**2 - np.log( np.sqrt(2*np.pi)*self.sigma )
 
 class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
     parameter_keys = ["shape", "mu", "sigma"]

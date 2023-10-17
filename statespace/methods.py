@@ -2,6 +2,7 @@ import numpy as np
 
 from primitive.linalg import invert_covariance
 from primitive.methods import InferenceModule
+from statespace.proposals import Particles
 
 # Base Kalman filtering class:
 
@@ -59,7 +60,7 @@ class KalmanFilter(InferenceModule):
         Additional changes in model parameters may be used in the Kalman iteration by extending this function.
         """
         A = self.model.expA(t-s)
-        noise_mean, Q = self.model.I.conditional_moments(s=s, t=t)
+        noise_mean, Q = self.model.I.conditional_moments(s=s, t=t) # the naming of this call may be changed for notational clarity.
 
         # Predict:
         x_pred = A @ x_init + noise_mean
@@ -287,3 +288,22 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
             self.history.append(self.iteration_history)
 
         return self.history
+    
+
+# Base particle filtering class:
+
+class ParticleFilter(InferenceModule):
+
+    def initialise(self, particle_config, N, **kwargs):
+
+        # Initialise sampling history:
+        self.history = []
+  
+        # Initialise particles:
+        self.particles = Particles(config=particle_config, N=N)
+        self.particles.update_particles(**kwargs)
+
+
+
+class MarginalisedParticleFilter(KalmanFilter):
+    pass

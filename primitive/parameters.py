@@ -7,15 +7,17 @@ class ParameterInterface:
 
     def __init__(self, **kwargs):
 
-        # Set parameter configuration.
-        self.parameters = {}
-        self.initialise_parameter_values(**kwargs)
+        if self.__class__.parameter_keys is not None:
+            
+            # Set parameter configuration.
+            self.parameters = {}
+            self.initialise_parameter_values(**kwargs)
 
-        # Binary variable to check if parameters are initialised.
-        self.valid = self.check_parameter_key_initialisation()
+            # Binary variable to check if parameters are initialised.
+            self.valid = self.check_parameter_key_initialisation()
 
-        # Set parameter schema:
-        self.set_parameter_schema()
+            # Set parameter schema:
+            self.set_parameter_schema()
 
     def get_parameter_values(self):
         # Return a dictionary of parameters.

@@ -1,3 +1,5 @@
+import numpy as np
+
 from primitive.priors import PriorModule
 from primitive.proposals import ProposalModule
 

@@ -57,6 +57,9 @@ class BaseStateSpaceModel:
         pass
 
     def sample(self, times, size=1):
+        """The assumption that x_init is always zeros is not fully general. The transition function is dependent on the actual value of x[0]. Hence the
+        function assumes that times[0] = 0. and times has at least two values.
+        """
         # Initialise state and measurement arrays:
         ## The number of columns in x_init should be configurable.
         ## We assume that X starts with [0 ... 0]^T
@@ -189,6 +192,7 @@ class NVMConstantVelocityModel(BaseStateSpaceModel):
 
     def sample(self, times, size=1):
         # Initialise the subordinator jumps
+        ## The function assumes that when size > 1, all samples are conditional on a single subordinator realisation.
         low = np.min(times)
         high = np.max(times)
         self.I.subordinator.initialise_proposal_samples(low=low, high=high)
@@ -285,6 +289,7 @@ class NVMLangevinModel(BaseStateSpaceModel):
 
     def sample(self, times, size=1):
         # Initialise the subordinator jumps
+        ## The function assumes that when size > 1, all samples are conditional on a single subordinator realisation.
         low = np.min(times)
         high = np.max(times)
         self.I.subordinator.initialise_proposal_samples(low=low, high=high)
