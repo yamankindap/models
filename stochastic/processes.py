@@ -10,12 +10,18 @@ from primitive.utils import incgammau
 
 from primitive.stochastics import LevyProcess
 
-
 class GammaProcess(LevyProcess):
+    """The gamma process class produces random jump times and sizes of a gamma Levy process.
+    It is designed to produce multiple realisations with a single call. 
+    The main method is .simulate_points() which returns random jump times and sizes for a given number of realisations.
+    The number of realisations are assumed to be equal to the number of particles (as in particle filtering).
+    The default single realisation shape is (1, M) where M is the number of jump times and sizes.
+    This shape is generalised to (n_particles, M) for multiple realisation versions.
+    """
     parameter_keys = ["beta", "C"]
 
     def __init__(self, **kwargs):
-        # Set parameters using the ParameterInterface parent.
+        # Set parameters using the ParameterInterface parent. 
         super().__init__(**kwargs)
 
         # Set sampling hyperparameters.
@@ -37,46 +43,56 @@ class GammaProcess(LevyProcess):
     def unit_variance_residual(self, c):
         return (self.C/self.beta**2)*incgammal(2, self.beta*c)
     
-    def simulate_from_series_representation(self, rate=1.0, M=100, gamma_0=0.0):
-        gamma_sequence = np.random.exponential(scale=1/rate, size=M)
-        gamma_sequence[0] += gamma_0 
-        gamma_sequence = gamma_sequence.cumsum()
+    def simulate_from_series_representation(self, rate=1.0, M=100, gamma_0=0.0, size=1):
+        gamma_sequence = np.random.exponential(scale=1/rate, size=(size,M))
+        gamma_sequence[:,0] += gamma_0
+        gamma_sequence = gamma_sequence.cumsum(axis=1)
+
         x_series = self.h_gamma(gamma_sequence)
         thinning_function = (1+self.beta*x_series)*np.exp(-self.beta*x_series)
-        u = np.random.uniform(low=0.0, high=1.0, size=x_series.size)
-        x_series = x_series[u < thinning_function]
+        u = np.random.uniform(low=0.0, high=1.0, size=x_series.shape)
+        x_series[u > thinning_function] = 0.
         return gamma_sequence, x_series
     
-    def simulate_adaptively_truncated_jump_series(self, rate=1.0):
+    def simulate_adaptively_truncated_jump_series(self, rate=1.0, size=1):
         # Adaptive truncation is based on Theorem 3 of Kindap, Godsill 2023 (the theorem number may change in publication). 
         # Gaussian approximation of the residual is not valid for the Gamma process.
-        gamma_sequence, x_series = self.simulate_from_series_representation(rate=rate, M=self.M, gamma_0=0.0)
-        truncation_level = self.h_gamma(gamma_sequence[-1])
+        gamma_sequence, x_series = self.simulate_from_series_representation(rate, M=10, gamma_0=0., size=size)
+
+        truncation_level = self.h_gamma(gamma_sequence[:,-1])
+
         residual_expected_value = rate*self.unit_expected_residual(truncation_level)
         residual_variance = rate*self.unit_variance_residual(truncation_level)
-        E_c = self.tolerance*x_series.sum()
+        E_c = self.tolerance*x_series.sum(axis=1)
 
-        while (residual_variance/((E_c - residual_expected_value)**2) > self.pt) or (E_c < residual_expected_value):
-            gamma_sequence_extension, x_series_extension = self.simulate_from_series_representation(rate=rate, M=self.M, gamma_0=gamma_sequence[-1])
-            gamma_sequence = np.concatenate((gamma_sequence, gamma_sequence_extension))
-            x_series = np.concatenate((x_series, x_series_extension))
-            truncation_level = self.h_gamma(gamma_sequence[-1])
+        condition1 = (residual_variance/((E_c - residual_expected_value)**2) > self.pt)
+        condition2 = (E_c < residual_expected_value)
+
+        while condition1.any() or condition2.any():
+            gamma_sequence_extension, x_series_extension = self.simulate_from_series_representation(rate=rate, M=self.M, gamma_0=gamma_sequence[:,-1], size=size)
+            gamma_sequence = np.concatenate((gamma_sequence, gamma_sequence_extension), axis=1)
+            x_series = np.concatenate((x_series, x_series_extension), axis=1)
+            truncation_level = self.h_gamma(gamma_sequence[:,-1])
             residual_expected_value = rate*self.unit_expected_residual(truncation_level)
             residual_variance = rate*self.unit_variance_residual(truncation_level)
-            E_c = self.tolerance*x_series.sum()
+            E_c = self.tolerance*x_series.sum(axis=1)
+
+            condition1 = (residual_variance/((E_c - residual_expected_value)**2) > self.pt)
+            condition2 = (E_c < residual_expected_value)
+            
         return x_series, truncation_level
     
-    def simulate_points(self, rate, low, high):
+    def simulate_points(self, rate, low, high, n_particles=1):
         """Returns the times and jump sizes associated with the point process representation of a Levy process. Returns the points.
         """
-        x_series, truncation_level = self.simulate_adaptively_truncated_jump_series(rate=rate)
+        x_series, truncation_level = self.simulate_adaptively_truncated_jump_series(rate=rate, size=n_particles)
         t_series = np.random.uniform(low=low, high=high, size=x_series.shape)
         return t_series, x_series  
     
-    def initialise_proposal_samples(self, low, high):
+    def initialise_proposal_samples(self, low, high, n_particles=1):
         """Simulates random times and jumps sizes from the prior over the whole evaluation input space.
         """
-        self.t_series, self.x_series = self.simulate_points(rate=(high-low), low=low, high=high) 
+        self.t_series, self.x_series = self.simulate_points(rate=(high-low), low=low, high=high, n_particles=n_particles) 
 
     def set_proposal_samples(self, proposal_t_series, proposal_x_series):
         self.t_series = proposal_t_series
@@ -84,16 +100,18 @@ class GammaProcess(LevyProcess):
 
     def propose_subordinator(self, proposal_interval):
         """On the given interval, removes the previous points and simulates new random points. Returns the proposal points.
+        NOTE that this function only works when there is a single particle under consideration. This may be fixed by
+        finding a method to keep the shape of x_series constant while applying conditional selection.
         """
         conditioning_x_series = self.x_series[(proposal_interval[1] < self.t_series)]
-        conditioning_x_series = np.concatenate((conditioning_x_series, self.x_series[(self.t_series < proposal_interval[0])]))
+        conditioning_x_series = np.concatenate((conditioning_x_series, self.x_series[(self.t_series < proposal_interval[0])])).reshape(1, -1)
         conditioning_t_series = self.t_series[(proposal_interval[1] < self.t_series)]
-        conditioning_t_series = np.concatenate((conditioning_t_series, self.t_series[(self.t_series < proposal_interval[0])]))
+        conditioning_t_series = np.concatenate((conditioning_t_series, self.t_series[(self.t_series < proposal_interval[0])])).reshape(1, -1)
         proposed_t_series, proposed_x_series = self.simulate_points(rate=(proposal_interval[1]-proposal_interval[0]), low=proposal_interval[0], high=proposal_interval[1])
-        proposal_x_series = np.concatenate((conditioning_x_series, proposed_x_series))
-        proposal_t_series = np.concatenate((conditioning_t_series, proposed_t_series))
+        proposal_x_series = np.concatenate((conditioning_x_series, proposed_x_series), axis=1)
+        proposal_t_series = np.concatenate((conditioning_t_series, proposed_t_series), axis=1)  
         return proposal_t_series, proposal_x_series
-    
+        
     def likelihood(self, x_prime, x):
         """ The likelihood should consider both the poisson process likelihood of the times and the joint jump density. 
         """

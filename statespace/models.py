@@ -66,19 +66,19 @@ class BaseStateSpaceModel:
         x_init = np.zeros((self.A.shape[1], 1))
 
         ## The third dimension of this array has to be same as the number of columns in x_init.
-        x = np.zeros(shape=(times.shape[0], x_init.shape[0], 1))
+        x = np.zeros(shape=(size, times.shape[0], x_init.shape[0], 1))
 
         ## The number of columns in y should be configurable.
-        y = np.zeros(shape=(times.shape[0], self.H.shape[0], 1))
+        y = np.zeros(shape=(size, times.shape[0], self.H.shape[0], 1))
 
-        x[0] = x_init
-        y[0] = self.H @ x[0] + self.eps(t=times[0])
+        x[:,0] = x_init
+        y[:,0] = self.H @ x[:, 0] + self.eps(t=times[0])
 
         for i in range(1, times.shape[0]):
             dt = times[i] - times[i-1]
 
-            x[i] = self.A(dt) @ x[i-1] + self.I(s=times[i-1], t=times[i])
-            y[i] = self.H @ x[i] + self.eps(t=times[i])
+            x[:,i] = self.A(dt) @ x[:,i-1] + self.I(s=times[i-1], t=times[i], n_particles=size)
+            y[:,i] = self.H @ x[:,i] + self.eps(t=times[i])
 
         return x, y
 
@@ -263,7 +263,10 @@ class BrownianLangevinModel(BaseStateSpaceModel):
 
 class NVMLangevinModel(BaseStateSpaceModel):
 
-    def __init__(self, subordinator, theta, mu=0., sigma=1., sigma_eps=0.1, shape=(2,1)):
+    def __init__(self, subordinator, theta, mu=0., sigma=1., sigma_eps=0.1, shape=(2,1), n_particles=1):
+
+        # Number of independent particles:
+        self.n_particles = n_particles
 
         # State-space model attributes:
         self.expA = expA_Langevin(**{"shape":(shape[0], shape[0]), "theta":theta})
@@ -278,7 +281,7 @@ class NVMLangevinModel(BaseStateSpaceModel):
         H = np.zeros((1,2))
         H[0][0] = 1
 
-        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(1,1), "sigma_eps":sigma_eps})}
+        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(n_particles, 1, 1), "sigma_eps":sigma_eps})}
         super().__init__(**config)
 
     def get_parameter_values(self):
@@ -292,7 +295,7 @@ class NVMLangevinModel(BaseStateSpaceModel):
         ## The function assumes that when size > 1, all samples are conditional on a single subordinator realisation.
         low = np.min(times)
         high = np.max(times)
-        self.I.subordinator.initialise_proposal_samples(low=low, high=high)
+        self.I.subordinator.initialise_proposal_samples(low=low, high=high, n_particles=size)
 
         x, y = super().sample(times=times, size=size)
 

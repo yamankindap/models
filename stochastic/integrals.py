@@ -23,11 +23,11 @@ class ForcingFunction(ParameterInterface):
         # Remove the shape key as it will not be changed after initialisation.
         return {key: value for key, value in parameters.items() if key not in ["shape"]}
 
-    def sample(self, s=None, t=None):
+    def sample(self, s=None, t=None, n_particles=1):
         pass
 
-    def __call__(self, s=None, t=None):
-        return self.sample(s=s, t=t)
+    def __call__(self, s=None, t=None, n_particles=1):
+        return self.sample(s=s, t=t, n_particles=n_particles)
     
 # Independent Brownian motion
     
@@ -106,9 +106,9 @@ class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
             if self.process is None:
                 raise ValueError("The forcing function is not initialised. Arguments must contain a subordinator or a process.")
     
-    def sample(self, s=None, t=None):
-        mean, cov = self.conditional_moments(s, t)
-        dW = np.random.multivariate_normal(mean=mean.flatten(), cov=cov, size=1).T
+    def sample(self, s=None, t=None, n_particles=1):
+        mean, cov = self.conditional_moments(s, t, n_particles=n_particles)
+        dW = np.array([np.random.multivariate_normal(mean=mean[i].flatten(), cov=cov[i], size=1).T for i in range(n_particles)])
         return dW
     
     def set_ssm_attributes(self, h, ft, expA):
@@ -120,34 +120,50 @@ class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
         setattr(self, "ft", ft)
         setattr(self, "expA", expA)
 
-    def conditional_moments(self, s, t):
+    def conditional_moments(self, s, t, n_particles=1):
         mask = (s < self.subordinator.t_series) & (self.subordinator.t_series <= t)
-        x_series = self.subordinator.x_series[mask]
-        t_series = self.subordinator.t_series[mask]
+        t_series = np.where(mask, self.subordinator.t_series, np.nan)
+        x_series = np.where(mask, self.subordinator.x_series, np.nan)
 
-        mean = np.zeros(self.h.shape)
-        for i in range(x_series.size):
-            mean += self.ft(t-t_series[i]) @ np.array([[self.mu]]) @ np.array([[x_series[i]]])
+        mean = np.zeros((n_particles, self.h.shape[0], self.h.shape[1]))
+        for i in range(x_series.shape[0]):
+            for j in range(x_series[i].size):
+                if np.isnan(x_series[i][j]):
+                    continue
+                else:
+                    mean[i] += self.ft(t-t_series[i][j]) @ np.array([[self.mu]]) @ np.array([[x_series[i][j]]])
 
-        cov = np.zeros(self.expA.shape)
-        for i in range(x_series.size):
-            mat = self.ft(t-t_series[i])
-            cov += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i]]])
+        cov = np.zeros((n_particles, self.expA.shape[0], self.expA.shape[1]))
+        for i in range(x_series.shape[0]):
+            for j in range(x_series[i].size):
+                if np.isnan(x_series[i][j]):
+                    continue
+                else:
+                    mat = self.ft(t-t_series[i][j])
+                    cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i][j]]])
 
         return mean, cov
     
-    def proposed_conditional_moments(self, s, t, t_series, x_series):
+    def proposed_conditional_moments(self, s, t, t_series, x_series, n_particles=1):
         mask = (s < t_series) & (t_series <= t)
-        x_series = x_series[mask]
-        t_series = t_series[mask]
+        t_series = np.where(mask, t_series, np.nan)
+        x_series = np.where(mask, x_series, np.nan)
 
-        mean = np.zeros(self.h.shape)
-        for i in range(x_series.size):
-            mean += self.ft(t-t_series[i]) @ np.array([[self.mu]]) @ np.array([[x_series[i]]])
+        mean = np.zeros((n_particles, self.h.shape[0], self.h.shape[1]))
+        for i in range(x_series.shape[0]):
+            for j in range(x_series[i].size):
+                if np.isnan(x_series[i][j]):
+                    continue
+                else:
+                    mean[i] += self.ft(t-t_series[i][j]) @ np.array([[self.mu]]) @ np.array([[x_series[i][j]]])
 
-        cov = np.zeros(self.expA.shape)
-        for i in range(x_series.size):
-            mat = self.ft(t-t_series[i])
-            cov += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i]]])
+        cov = np.zeros((n_particles, self.expA.shape[0], self.expA.shape[1]))
+        for i in range(x_series.shape[0]):
+            for j in range(x_series[i].size):
+                if np.isnan(x_series[i][j]):
+                    continue
+                else:
+                    mat = self.ft(t-t_series[i][j])
+                    cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i][j]]])
 
         return mean, cov

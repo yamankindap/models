@@ -27,8 +27,8 @@ class KalmanFilter(InferenceModule):
         self.history = []
 
         # Initialise estimate attributes
-        self.x_est = np.zeros(shape=(self.y.shape[0]+1, self.D, 1))
-        self.P_est = np.zeros(shape=(self.y.shape[0]+1, self.D, self.D))
+        self.x_est = np.zeros(shape=(self.model.n_particles, self.y.shape[-3]+1, self.D, 1))
+        self.P_est = np.zeros(shape=(self.model.n_particles, self.y.shape[-3]+1, self.D, self.D))
 
         self.log_evidence = []
 
@@ -60,7 +60,7 @@ class KalmanFilter(InferenceModule):
         Additional changes in model parameters may be used in the Kalman iteration by extending this function.
         """
         A = self.model.expA(t-s)
-        noise_mean, Q = self.model.I.conditional_moments(s=s, t=t) # the naming of this call may be changed for notational clarity.
+        noise_mean, Q = self.model.I.conditional_moments(s=s, t=t, n_particles=self.model.n_particles) # the naming of this call may be changed for notational clarity.
 
         # Predict:
         x_pred = A @ x_init + noise_mean
@@ -72,11 +72,11 @@ class KalmanFilter(InferenceModule):
         kalman_gain = P_pred @ self.model.H.T @ invert_covariance(residual_pred_cov)
 
         x_est = x_pred + kalman_gain @ residual_pred
-        P_est = (np.eye(x_init.shape[0]) - kalman_gain @ self.model.H) @ P_pred
+        P_est = (np.eye(x_init.shape[-2]) - kalman_gain @ self.model.H) @ P_pred
 
         # Calculate log marginal likelihood:
-        log_det = np.linalg.slogdet(residual_pred_cov)[1]
-        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[0] * np.log(2 * np.pi))
+        log_det = np.linalg.slogdet(residual_pred_cov)[1].reshape(-3, 1, 1)
+        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[-2] * np.log(2 * np.pi))
         
         return x_est, P_est, log_marginal_likelihood
     
@@ -93,10 +93,14 @@ class KalmanFilter(InferenceModule):
             s = extended_times[i]
 
             # Filtering:
-            self.x_est[i+1], self.P_est[i+1], log_likelihood = self.kalman_iteration(y=self.y[i], x_init=self.x_est[i], P_init=self.P_est[i], s=s, t=self.X[i])
+            self.x_est[:, i+1], self.P_est[:, i+1], log_likelihood = self.kalman_iteration(y=self.y[:, i], x_init=self.x_est[:, i], P_init=self.P_est[:, i], s=s, t=self.X[i])
 
             # Save results:
-            self.iteration_history.append(self.model.get_parameter_values() | {"time":self.X[i], "mean":self.x_est[i+1], "cov":self.P_est[i+1]})
+            self.iteration_history.append(self.model.get_parameter_values() | {"time":self.X[i],
+                                                                               "mean":self.x_est[:, i+1], 
+                                                                               "cov":self.P_est[:, i+1]})
+            
+            self.log_evidence.append(log_likelihood)
 
     def filter(self, times, y, x_init, P_init):
         """This method is the default filtering functionality for changes in time with fixed model parameters.
@@ -104,16 +108,16 @@ class KalmanFilter(InferenceModule):
 
         # Set training variables:
         self.set_training_variables(y=y, X=times, Xeval=None)
-        self.set_state_dims(D=x_init.shape[0])
-        
+        self.set_state_dims(D=x_init.shape[-2])
+
         # Initialise history:
         self.initialise()
 
         # Start iterations:
-        self.x_est[0] = x_init
-        self.P_est[0] = P_init
+        self.x_est[:, 0, :, :] = x_init
+        self.P_est[:, 0, :, :] = P_init
 
-        self.initialise_iteration(self.X[0], self.x_est[0], self.P_est[0])
+        self.initialise_iteration(self.X[0], self.x_est[:, 0], self.P_est[:, 0])
         self.kalman_sweep()
 
         self.history.append(self.iteration_history)
@@ -137,14 +141,14 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
         # Initialise subordinator:
         low = self.X.min()
         high = self.X.max()
-        self.model.I.subordinator.initialise_proposal_samples(low, high)
+        self.model.I.subordinator.initialise_proposal_samples(low, high, n_particles=self.model.n_particles)
 
         # Initialise history:
         super().initialise()
 
         # Start iterations:
-        self.x_est[0] = x_init
-        self.P_est[0] = P_init
+        self.x_est[:, 0, :, :] = x_init
+        self.P_est[:, 0, :, :] = P_init
 
     def initialise_iteration(self, i, t, x_init, P_init):
         """This method initialises an iteration history attribute and sets the initial point given by a time t, mean vector x_init, covariance matrix P_init and a log_likelihood. 
@@ -158,7 +162,7 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
         """
 
         # Compute log_likelihood of the estimates:
-        log_likelihood = self.log_marginal_conditional_likelihood(y=self.y[i], x_est=x_init, P_est=P_init)
+        log_likelihood = self.log_marginal_conditional_likelihood(y=self.y[:, i], x_est=x_init, P_est=P_init)
 
         # Initialise sampling history:
         self.iteration_history = [self.model.get_parameter_values() | {"time":t, 
@@ -178,8 +182,8 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
         residual_pred_cov = self.model.H @ P_est @ self.model.H.T + self.model.eps.covariance()
 
         # Calculate log marginal likelihood:
-        log_det = np.linalg.slogdet(residual_pred_cov)[1]
-        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[0] * np.log(2 * np.pi))
+        log_det = np.linalg.slogdet(residual_pred_cov)[1].reshape(-3, 1, 1)
+        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[-2] * np.log(2 * np.pi))
 
         return log_marginal_likelihood
 
@@ -204,24 +208,24 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
         kalman_gain = P_pred @ self.model.H.T @ invert_covariance(residual_pred_cov)
 
         x_est = x_pred + kalman_gain @ residual_pred
-        P_est = (np.eye(x_init.shape[0]) - kalman_gain @ self.model.H) @ P_pred
+        P_est = (np.eye(x_init.shape[-2]) - kalman_gain @ self.model.H) @ P_pred
 
         # Calculate log marginal likelihood:
-        log_det = np.linalg.slogdet(residual_pred_cov)[1]
-        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[0] * np.log(2 * np.pi))
+        log_det = np.linalg.slogdet(residual_pred_cov)[1].reshape(-3, 1, 1)
+        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[-2] * np.log(2 * np.pi))
 
         return x_est, P_est, log_marginal_likelihood
     
     def iteration_Gaussian_mixture_moments(self, burn_in=0):
         """This method computes the Gaussian mixture mean and covariance of the MCMC samples in the current iteration_history.
         """
-        means = np.array([sample['mean'] for sample in self.iteration_history])[burn_in:]
+        means = np.array([sample['mean'] for sample in self.iteration_history])[burn_in:][:,0,:,:]
         post_mix_mean = means.mean(axis=0)
 
         residual_mean = (means - post_mix_mean)
         mixture_adjustment = residual_mean @ np.transpose(residual_mean, axes=(0,2,1))
 
-        post_mix_cov = (np.array([sample['cov'] for sample in self.iteration_history])[burn_in:] + mixture_adjustment).mean(axis=0)
+        post_mix_cov = (np.array([sample['cov'] for sample in self.iteration_history])[burn_in:][:,0,:,:] + mixture_adjustment).mean(axis=0)
 
         return post_mix_mean, post_mix_cov
 
@@ -231,7 +235,7 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
 
         # Set training variables:
         self.set_training_variables(y=y, X=times, Xeval=None)
-        self.set_state_dims(D=x_init.shape[0])
+        self.set_state_dims(D=x_init.shape[-2])
         
         # Initialise history:
         self.initialise(x_init, P_init)
@@ -241,7 +245,7 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
             # Previous time step is s.
             s = extended_times[i]
 
-            self.initialise_iteration(i=i, t=t, x_init=self.x_est[i], P_init=self.P_est[i])
+            self.initialise_iteration(i=i, t=t, x_init=self.x_est[:, i], P_init=self.P_est[:, i])
 
             # Start sampling:
             for _ in range(n_samples):
@@ -251,17 +255,18 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
 
                 # Filtering:
                 ## x_init and P_init are always set to the previous times filtering estimate.
-                proposed_x_est, proposed_P_est, proposed_log_likelihood = self.kalman_iteration(y=self.y[i],
-                                                                                x_init=self.x_est[i],
-                                                                                P_init=self.P_est[i],
+                proposed_x_est, proposed_P_est, proposed_log_likelihood = self.kalman_iteration(y=self.y[:, i],
+                                                                                x_init=self.x_est[:, i],
+                                                                                P_init=self.P_est[:, i],
                                                                                 s=s, 
                                                                                 t=self.X[i],
                                                                                 t_series=proposal_t_series,
                                                                                 x_series=proposal_x_series
                                                                             )
-            
 
-                acceptance_prob = np.min([1, np.exp(proposed_log_likelihood[0][0] - self.iteration_log_evidence[-1][0][0])])
+                likelihood_ratio = np.exp(proposed_log_likelihood[:,0,0] - self.iteration_log_evidence[-1][:, 0, 0]).reshape(-1, 1)
+
+                acceptance_prob = np.min(np.concatenate((np.ones((likelihood_ratio.shape[0], 1)).reshape(-1, 1), likelihood_ratio), axis=1), axis=1)
                 u = np.random.uniform(low=0.0, high=1.0)
 
                 if u < acceptance_prob:
@@ -281,7 +286,7 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
                     self.iteration_history.append(self.iteration_history[-1])
 
             # Compute filtering estimate as a collapsed Gaussian:
-            self.x_est[i+1], self.P_est[i+1] = self.iteration_Gaussian_mixture_moments(burn_in=burn_in)
+            self.x_est[:, i+1], self.P_est[:, i+1] = self.iteration_Gaussian_mixture_moments(burn_in=burn_in)
 
             # Save log_evidence and iteration history:
             self.log_evidence.append(self.iteration_log_evidence)
