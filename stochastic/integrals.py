@@ -131,20 +131,18 @@ class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
 
         mean = np.zeros((n_particles, self.h.shape[0], self.h.shape[1]))
         for i in range(x_series.shape[0]):
-            for j in range(x_series[i].size):
-                if np.isnan(x_series[i][j]):
-                    continue
-                else:
-                    mean[i] += self.ft(t-t_series[i][j]) @ np.array([[self.mu]]) @ np.array([[x_series[i][j]]])
+            valid_t_series = t_series[i][~np.isnan(x_series[i])]
+            valid_x_series = x_series[i][~np.isnan(x_series[i])]
+            for j in range(valid_x_series.size):
+                mean[i] += self.ft(t-valid_t_series[j]) @ np.array([[self.mu]]) @ np.array([[valid_x_series[j]]])
 
         cov = np.zeros((n_particles, self.expA.shape[0], self.expA.shape[1]))
         for i in range(x_series.shape[0]):
-            for j in range(x_series[i].size):
-                if np.isnan(x_series[i][j]):
-                    continue
-                else:
-                    mat = self.ft(t-t_series[i][j])
-                    cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i][j]]])
+            valid_t_series = t_series[i][~np.isnan(x_series[i])]
+            valid_x_series = x_series[i][~np.isnan(x_series[i])]
+            for j in range(valid_x_series.size):
+                mat = self.ft(t-valid_t_series[j])
+                cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[valid_x_series[j]]])
 
         return mean, cov
     
@@ -159,19 +157,17 @@ class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
 
         mean = np.zeros((n_particles, self.h.shape[0], self.h.shape[1]))
         for i in range(x_series.shape[0]):
-            for j in range(x_series[i].size):
-                if np.isnan(x_series[i][j]):
-                    continue
-                else:
-                    mean[i] += self.ft(t-t_series[i][j]) @ np.array([[self.mu]]) @ np.array([[x_series[i][j]]])
+            valid_t_series = t_series[i][~np.isnan(x_series[i])]
+            valid_x_series = x_series[i][~np.isnan(x_series[i])]
+            for j in range(valid_x_series.size):
+                mean[i] += self.ft(t-valid_t_series[j]) @ np.array([[self.mu]]) @ np.array([[valid_x_series[j]]])
 
         cov = np.zeros((n_particles, self.expA.shape[0], self.expA.shape[1]))
         for i in range(x_series.shape[0]):
-            for j in range(x_series[i].size):
-                if np.isnan(x_series[i][j]):
-                    continue
-                else:
-                    mat = self.ft(t-t_series[i][j])
-                    cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i][j]]])
+            valid_t_series = t_series[i][~np.isnan(x_series[i])]
+            valid_x_series = x_series[i][~np.isnan(x_series[i])]
+            for j in range(valid_x_series.size):
+                mat = self.ft(t-valid_t_series[j])
+                cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[valid_x_series[j]]])
 
         return mean, cov
