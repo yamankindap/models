@@ -165,7 +165,10 @@ class BrownianConstantVelocityModel(BaseStateSpaceModel):
 
 class NVMConstantVelocityModel(BaseStateSpaceModel):
 
-    def __init__(self, subordinator, mu=0., sigma=1., sigma_eps=0.1, shape=(2,1)):
+    def __init__(self, subordinator, mu=0., sigma=1., sigma_eps=0.1, shape=(2,1), n_particles=1):
+
+        # Number of independent particles:
+        self.n_particles = n_particles
 
         # State-space model attributes:
         self.expA = expA_ConstantVelocity(**{"shape":(shape[0], shape[0])})
@@ -180,7 +183,7 @@ class NVMConstantVelocityModel(BaseStateSpaceModel):
         H = np.zeros((1,2))
         H[0][0] = 1
 
-        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(1,1), "sigma_eps":sigma_eps})}
+        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(n_particles, 1, 1), "sigma_eps":sigma_eps})}
         super().__init__(**config)
 
     def get_parameter_values(self):
@@ -192,10 +195,9 @@ class NVMConstantVelocityModel(BaseStateSpaceModel):
 
     def sample(self, times, size=1):
         # Initialise the subordinator jumps
-        ## The function assumes that when size > 1, all samples are conditional on a single subordinator realisation.
         low = np.min(times)
         high = np.max(times)
-        self.I.subordinator.initialise_proposal_samples(low=low, high=high)
+        self.I.subordinator.initialise_proposal_samples(low=low, high=high, n_particles=size)
 
         x, y = super().sample(times=times, size=size)
 
@@ -292,7 +294,6 @@ class NVMLangevinModel(BaseStateSpaceModel):
 
     def sample(self, times, size=1):
         # Initialise the subordinator jumps
-        ## The function assumes that when size > 1, all samples are conditional on a single subordinator realisation.
         low = np.min(times)
         high = np.max(times)
         self.I.subordinator.initialise_proposal_samples(low=low, high=high, n_particles=size)

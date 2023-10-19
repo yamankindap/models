@@ -130,18 +130,14 @@ class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
         x_series = np.where(mask, self.subordinator.x_series, np.nan)
 
         mean = np.zeros((n_particles, self.h.shape[0], self.h.shape[1]))
-        for i in range(x_series.shape[0]):
-            valid_t_series = t_series[i][~np.isnan(x_series[i])]
-            valid_x_series = x_series[i][~np.isnan(x_series[i])]
-            for j in range(valid_x_series.size):
-                mean[i] += self.ft(t-valid_t_series[j]) @ np.array([[self.mu]]) @ np.array([[valid_x_series[j]]])
-
         cov = np.zeros((n_particles, self.expA.shape[0], self.expA.shape[1]))
         for i in range(x_series.shape[0]):
+            # mask_i = np.isnan(x_series[i])
             valid_t_series = t_series[i][~np.isnan(x_series[i])]
             valid_x_series = x_series[i][~np.isnan(x_series[i])]
             for j in range(valid_x_series.size):
                 mat = self.ft(t-valid_t_series[j])
+                mean[i] += mat @ np.array([[self.mu]]) @ np.array([[valid_x_series[j]]])
                 cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[valid_x_series[j]]])
 
         return mean, cov
@@ -156,18 +152,14 @@ class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
         x_series = np.where(mask, x_series, np.nan)
 
         mean = np.zeros((n_particles, self.h.shape[0], self.h.shape[1]))
-        for i in range(x_series.shape[0]):
-            valid_t_series = t_series[i][~np.isnan(x_series[i])]
-            valid_x_series = x_series[i][~np.isnan(x_series[i])]
-            for j in range(valid_x_series.size):
-                mean[i] += self.ft(t-valid_t_series[j]) @ np.array([[self.mu]]) @ np.array([[valid_x_series[j]]])
-
         cov = np.zeros((n_particles, self.expA.shape[0], self.expA.shape[1]))
         for i in range(x_series.shape[0]):
+            # mask_i = np.isnan(x_series[i])
             valid_t_series = t_series[i][~np.isnan(x_series[i])]
             valid_x_series = x_series[i][~np.isnan(x_series[i])]
             for j in range(valid_x_series.size):
                 mat = self.ft(t-valid_t_series[j])
+                mean[i] += mat @ np.array([[self.mu]]) @ np.array([[valid_x_series[j]]])
                 cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[valid_x_series[j]]])
 
         return mean, cov
