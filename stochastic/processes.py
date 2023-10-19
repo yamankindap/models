@@ -213,16 +213,19 @@ class TemperedStableProcess(LevyProcess):
         return R_mu, R_var
 
     def simulate_residual_gaussians(self, low, high, truncation_level, shape):
+        n_samples = 50
+        # n_samples = shape[1]
+
         R_mu = (high-low)*self.unit_expected_residual(truncation_level)
         R_var = (high-low)*self.unit_variance_residual(truncation_level)
 
-        t_series = np.linspace(low, high, num=shape[1]+1) # This series includes 0, which is later removed.
+        t_series = np.linspace(low, high, num=n_samples+1) # This series includes 0, which is later removed.
         delta = t_series[1] - t_series[0]
 
-        residual_jumps = np.random.normal(loc=delta * R_mu, scale=np.sqrt(delta * R_var), size=(shape[1], R_mu.shape[0])).T
+        residual_jumps = np.random.normal(loc=delta * R_mu, scale=np.sqrt(delta * R_var), size=(n_samples, R_mu.shape[0])).T
 
         # Broadcast linspaced times to number of particles.
-        t_series = np.broadcast_to(t_series[1:][np.newaxis], shape=(shape[0],shape[1]))
+        t_series = np.broadcast_to(t_series[1:][np.newaxis], shape=(shape[0], n_samples))
 
         return t_series, residual_jumps
 
@@ -293,13 +296,13 @@ class TemperedStableProcess(LevyProcess):
         t_series = np.random.uniform(low=low, high=high, size=x_series.shape)
         residual_t_series, residual_jumps = self.simulate_residual(low=low, high=high, truncation_level=truncation_level, shape=x_series.shape)
 
-        return np.concatenate((t_series, residual_t_series), axis=1), np.concatenate((x_series, residual_jumps),  axis=1)    
+        return np.concatenate((t_series, residual_t_series), axis=1), np.concatenate((x_series, residual_jumps),  axis=1)
 
 
     def initialise_proposal_samples(self, low, high, n_particles=1):
         """Simulates random times and jumps sizes from the prior over the whole evaluation input space.
         """
-        self.t_series, self.x_series = self.simulate_points(rate=(high-low), low=low, high=high, n_particles=n_particles) 
+        self.t_series, self.x_series = self.simulate_points(rate=(high-low), low=low, high=high, n_particles=n_particles)
 
     def set_proposal_samples(self, proposal_t_series, proposal_x_series):
         self.t_series = proposal_t_series
@@ -318,7 +321,7 @@ class TemperedStableProcess(LevyProcess):
         conditioning_t_series = np.concatenate((conditioning_t_series, self.t_series[(self.t_series < proposal_interval[0])])).reshape(1, -1)
         proposed_t_series, proposed_x_series = self.simulate_points(rate=(proposal_interval[1]-proposal_interval[0]), low=proposal_interval[0], high=proposal_interval[1])
         proposal_x_series = np.concatenate((conditioning_x_series, proposed_x_series), axis=1)
-        proposal_t_series = np.concatenate((conditioning_t_series, proposed_t_series), axis=1)  
+        proposal_t_series = np.concatenate((conditioning_t_series, proposed_t_series), axis=1)
 
         return proposal_t_series, proposal_x_series
     

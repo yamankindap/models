@@ -121,7 +121,11 @@ class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
         setattr(self, "expA", expA)
 
     def conditional_moments(self, s, t, n_particles=1):
+        # Remove the jump times and sizes outside of the considered interval by setting them to NaN.
         mask = (s < self.subordinator.t_series) & (self.subordinator.t_series <= t)
+        # Additionally remove any jumps that have zero size.
+        mask = mask & (self.subordinator.x_series > 0)
+
         t_series = np.where(mask, self.subordinator.t_series, np.nan)
         x_series = np.where(mask, self.subordinator.x_series, np.nan)
 
@@ -145,7 +149,11 @@ class NormalVarianceMeanProcessDrivenIntegral(ForcingFunction):
         return mean, cov
     
     def proposed_conditional_moments(self, s, t, t_series, x_series, n_particles=1):
+        # Remove the jump times and sizes outside of the considered interval by setting them to NaN.
         mask = (s < t_series) & (t_series <= t)
+        # Additionally remove any jumps that have zero size.
+        mask = mask & (x_series > 0)
+
         t_series = np.where(mask, t_series, np.nan)
         x_series = np.where(mask, x_series, np.nan)
 

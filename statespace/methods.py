@@ -251,7 +251,7 @@ class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
             for _ in range(n_samples):
                 
                 # Propose subordinator jumps:
-                proposal_t_series, proposal_x_series = self.model.I.subordinator.propose_subordinator((s,t))
+                proposal_t_series, proposal_x_series = self.model.I.subordinator.propose_subordinator((s[0],t[0]))
 
                 # Filtering:
                 ## x_init and P_init are always set to the previous times filtering estimate.
