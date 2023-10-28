@@ -57,7 +57,7 @@ class GammaProcess(LevyProcess):
     def simulate_adaptively_truncated_jump_series(self, rate=1.0, size=1):
         # Adaptive truncation is based on Theorem 3 of Kindap, Godsill 2023 (the theorem number may change in publication). 
         # Gaussian approximation of the residual is not valid for the Gamma process.
-        gamma_sequence, x_series = self.simulate_from_series_representation(rate, M=10, gamma_0=0., size=size)
+        gamma_sequence, x_series = self.simulate_from_series_representation(rate, M=self.M, gamma_0=0., size=size)
 
         truncation_level = self.h_gamma(gamma_sequence[:,-1])
 
@@ -257,7 +257,7 @@ class TemperedStableProcess(LevyProcess):
     def simulate_adaptively_truncated_jump_series(self, rate=1.0, size=1):
         # Adaptive truncation is based on Theorem 3 of Kindap, Godsill 2023 (the theorem number may change in publication). 
         # Gaussian approximation of the residual is not valid for the Gamma process.
-        gamma_sequence, x_series = self.simulate_from_series_representation(rate, M=10, gamma_0=0., size=size)
+        gamma_sequence, x_series = self.simulate_from_series_representation(rate, M=self.M, gamma_0=0., size=size)
         truncation_level = self.h_stable(gamma_sequence[:,-1])
 
         residual_expected_value = rate*self.unit_expected_residual(truncation_level)
@@ -599,6 +599,7 @@ class GeneralisedInverseGaussianProcess(LevyProcess):
             residual_expected_value = rate*self.pos_ext_gamma_process.unit_expected_residual(truncation_level)
             residual_variance = rate*self.pos_ext_gamma_process.unit_variance_residual(truncation_level)
             E_c = self.tolerance*x_series.sum(axis=1)
+            itr += 1
 
             condition1 = (residual_variance/((E_c - residual_expected_value)**2) > self.pt)
             condition2 = (E_c < residual_expected_value)
