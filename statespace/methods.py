@@ -2,313 +2,207 @@ import numpy as np
 
 from primitive.linalg import invert_covariance
 from primitive.methods import InferenceModule
-from statespace.proposals import Particles
+
+# Kalman filtering recursion functions:
+
+def kalman_prediction(mu_init, C_init, F, m, Q):
+    """Kalman prediction algorithm for a linear dynamical model.
+
+    - Representation of the initial distribution.
+    The initial distribution of the states may be a single Gaussian represented by its mean 'mu_init' and covariance 'C_init' with shapes (Dx1) and (DxD) respectively.
+    Additionally, it may be represented by Gaussian particles by an extended array with shapes (NpxDx1) and (NpxDxD) respectively where Np is the number of particles.
+
+    - Linear dynamical model.
+    The parameters defining the linear dynamical model are 'F' which is the transition matrix (DxD), and 'm', 'Q' are the mean (Dx1) and covariance (DxD) of the driving Gaussian process. 
+    For multiple particles, the parameters 'F', 'm' and 'Q' can be shared or each particle may have a separate setting. In this case the shapes must be extended to (NpxDxD), (NpxDx1) 
+    and (NpxDxD) respectively.
+
+    Returns mu_pred and C_pred which are the predictive moments of the dynamically evolved density.
+    """
+    mu_ts = F @ mu_init + m
+    C_ts = F @ C_init @ F.T + Q
+    return mu_ts, C_ts
+
+def kalman_correction(y, mu_pred, C_pred, H, Omega_eps):
+    """Kalman correction algorithm for a linear model.
+
+    - Representation of the initial distribution.
+    The initial distribution of the states may be a single Gaussian represented by its mean 'mu_pred' and covariance 'C_pred' with shapes (Dx1) and (DxD) respectively.
+    Additionally, it may be represented by Gaussian particles by an extended array with shapes (NpxDx1) and (NpxDxD) respectively where Np is the number of particles.
+
+    - Linear dynamical model.
+    The parameters defining the linear model are 'H' which is a fixed observation model (D_primexD), and 'Omega_eps' (D_primexD_prime) is the observation noise covariance matrix.
+    This inherently assumes the observation noise is Gaussian. A particle representation of the observation noise can be applied by extending 'Omega_eps' to (NpxD_primexD_prime).
+
+    - Log marginal likelihood.
+    The log likelihood of the model given observation 'y' and the initial distribution represented by 'mu_pred', 'C_pred'.
+
+    Returns mu_est, C_est and log_marginal_likelihood which are the filtering mean, covariance and the log marginal likelihood.
+    """
+
+    # Kalman correction:
+    residual_pred = y - H @ mu_pred
+    residual_pred_cov = H @ C_pred @ H.T + Omega_eps
+
+    K_t = C_pred @ H.T @ np.linalg.inv(residual_pred_cov)
+    mu_tt = mu_pred + K_t @ residual_pred
+    C_tt = C_pred - K_t @ H @ C_pred
+
+    # Calculate log marginal likelihood:
+    log_det = np.linalg.slogdet(residual_pred_cov)[1].reshape(-1, 1, 1)
+    log_marginal_likelihood = -0.5 * (log_det + np.swapaxes(residual_pred, -1, -2) @ np.linalg.inv(residual_pred_cov) @ residual_pred + y.shape[-2] * np.log(2 * np.pi))
+
+    return mu_tt, C_tt, log_marginal_likelihood
+
 
 # Base Kalman filtering class:
 
 class KalmanFilter(InferenceModule):
 
-    def set_state_dims(self, D):
-        """This method creates an instance attribute D that represents the number of dimensions of the state. 
+    def initialise_memory(self, mu_prior, C_prior, mu_est, C_est, log_marginal_likelihood):
 
-        This is required in general for initialisation of variable arrays containing mean vectors and covariance matrices at times t.
-        """
-        self.D = D
-
-    def initialise(self):
-        """This method initialises the instance history attribute which contains the results of the estimation method.
-
-        The history attribute is a list of iteration history variables. An iteration may refer to any computation that involves a change
-        in time or a change in model parameters for a fixed time interval.
-
-        Additionally, the instance attributes that represent the mean x_est, covariance P_est and log_evidence are created for ease of operation.
-        """
-        # Initialise sampling history:
-        self.history = []
-
-        # Initialise estimate attributes
-        self.x_est = np.zeros(shape=(self.model.n_particles, self.y.shape[-3]+1, self.D, 1))
-        self.P_est = np.zeros(shape=(self.model.n_particles, self.y.shape[-3]+1, self.D, self.D))
-
-        self.log_evidence = []
-
-    def initialise_iteration(self, t, x_init, P_init):
-        """This method initialises an iteration history attribute and sets the initial point given by a time t, mean vector x_init and covariance matrix P_init. 
-
-        An iteration may refer to any computation that involves a change in time for fixed model parameters or a change in model parameters for a fixed time interval.
-
-        The iteration history is a list of dictionaries of model parameters, time, mean vector and covariance matrix associated with separate time points t and
-        particles, i.e. an iteration may be index by time and particle id. 
+        D = mu_prior.shape[-2]
         
-        At the start of each iteration the iteration memory attribute is reset. Thus, it should be appended to the history attribute before this line.
+        field_names = ['predictive_mean', 'predictive_cov', 'filtered_mean', 'filtered_cov', 'log_marginal_likelihood']
+        field_dtypes = ['f4', 'f4', 'f4', 'f4', 'f4']
+        field_shapes = [(D, 1), (D, D), (D, 1), (D, D), (1,1,1)]
 
-        When inheriting from this class, the child class can extend the dictionary key words to include other variables. These should also be made arguments for
-        the method. In the future, we can automate this copy/paste operation by implementing the method using kwargs.
-        """
-        # Initialise iteration history:
-        self.iteration_history = []
-        self.iteration_history.append(self.model.get_parameter_values() | {"time":t, "mean":x_init, "cov":P_init})
+        datatype = np.dtype([(field_names[i], field_dtypes[i], field_shapes[i]) for i in range(len(field_names))])
+        memory = np.array([(mu_prior, C_prior, mu_est, C_est, log_marginal_likelihood)], dtype=datatype)
 
-    #### DEVNOTE #### t_series, x_series in Levy models are considered parameters of our model.
-    def kalman_iteration(self, y, x_init, P_init, s, t):
-        """This method implements the prediction and correction steps of a Kalman filter iteration and returns the resulting mean vector x_est, covariance matrix P_est
-        and log_likelihood.
+        return memory, datatype
 
-        The associated matrices for the state transition A, state noise covariance Q, observation matrix H and observation noise covariance are computed using the
-        model object. This implicitly assumes that no change in model parameters is made during this iteration.
+    def filter(self, times, y, mu_prior, C_prior):
 
-        Additional changes in model parameters may be used in the Kalman iteration by extending this function.
-        """
-        A = self.model.expA(t-s)
-        noise_mean, Q = self.model.I.conditional_moments(s=s, t=t, n_particles=self.model.n_particles) # the naming of this call may be changed for notational clarity.
+        mu_est, C_est, log_marginal_likelihood = kalman_correction(y=y[0], mu_pred=mu_prior, C_pred=C_prior, H=self.model.H, Omega_eps=self.model.eps.covariance(t=times[0]))
+        memory, datatype = self.initialise_memory(mu_prior, C_prior, mu_est, C_est, log_marginal_likelihood)
 
-        # Predict:
-        x_pred = A @ x_init + noise_mean
-        P_pred = A @ P_init @ A.T + Q
+        for i in range(1, times.shape[0]):
 
-        # Update:
-        residual_pred = y - self.model.H @ x_pred
-        residual_pred_cov = self.model.H @ P_pred @ self.model.H.T + self.model.eps.covariance()
-        kalman_gain = P_pred @ self.model.H.T @ invert_covariance(residual_pred_cov)
-
-        x_est = x_pred + kalman_gain @ residual_pred
-        P_est = (np.eye(x_init.shape[-2]) - kalman_gain @ self.model.H) @ P_pred
-
-        # Calculate log marginal likelihood:
-        log_det = np.linalg.slogdet(residual_pred_cov)[1].reshape(-3, 1, 1)
-        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[-2] * np.log(2 * np.pi))
-        
-        return x_est, P_est, log_marginal_likelihood
-    
-    def kalman_sweep(self):
-        """This method implements a full sweep of the given input-output data set for fixed model parameters. This may be required to compute the marginal
-        likelihood of the data set. The results will be appended to the iteration_history attribute.
-         
-        The iteration in this context represents a change in time for fixed model parameters.
-        """
-
-        extended_times = np.vstack((self.X[0], self.X)) # This is required to include the prior on x_est(times=0)
-        for i, t in enumerate(self.X, 0):
-            # Previous time step is s.
-            s = extended_times[i]
-
-            # Filtering:
-            self.x_est[:, i+1], self.P_est[:, i+1], log_likelihood = self.kalman_iteration(y=self.y[:, i], x_init=self.x_est[:, i], P_init=self.P_est[:, i], s=s, t=self.X[i])
-
-            # Save results:
-            self.iteration_history.append(self.model.get_parameter_values() | {"time":self.X[i],
-                                                                               "mean":self.x_est[:, i+1], 
-                                                                               "cov":self.P_est[:, i+1]})
+            dt = (times[i] - times[i-1])
             
-            self.log_evidence.append(log_likelihood)
+            F = self.model.F(dt)
+            m, Q = self.model.I.moments(s=times[i-1], t=times[i], n_particles=1)
 
-    def filter(self, times, y, x_init, P_init):
-        """This method is the default filtering functionality for changes in time with fixed model parameters.
-        """
+            mu_pred, C_pred = kalman_prediction(mu_init=memory['filtered_mean'][-1], C_init=memory['filtered_cov'][-1], F=F, m=m, Q=Q)
+            mu_est, C_est, log_marginal_likelihood = kalman_correction(y=y[i], mu_pred=mu_pred, C_pred=C_pred, H=self.model.H, Omega_eps=self.model.eps.covariance(times[i]))
 
-        # Set training variables:
-        self.set_training_variables(y=y, X=times, Xeval=None)
-        self.set_state_dims(D=x_init.shape[-2])
+            # Save variables:
+            memory = np.concatenate((memory, np.array([(mu_pred, C_pred, mu_est, C_est, log_marginal_likelihood)], dtype=datatype)))
 
-        # Initialise history:
-        self.initialise()
-
-        # Start iterations:
-        self.x_est[:, 0, :, :] = x_init
-        self.P_est[:, 0, :, :] = P_init
-
-        self.initialise_iteration(self.X[0], self.x_est[:, 0], self.P_est[:, 0])
-        self.kalman_sweep()
-
-        self.history.append(self.iteration_history)
-
-        return self.history
-
-
-class SequentialCollapsedGaussianMCMCFilter(KalmanFilter):
-
-    def initialise(self, x_init, P_init):
-        """This method performs two functions. 1) It initialises the instance history attribute which contains the results of the estimation method.
-        2) It initialises the subordinator jumps by generating random jump times and sizes.
-
-        In the future, there may be an option to specify the initial jumps directly as kwargs.
-
-        The history attribute is a list of iteration history variables. An iteration may refer to any computation that involves a change
-        in time or a change in model parameters for a fixed time interval.
-
-        Additionally, the instance attributes that represent the mean x_est, covariance P_est and log_evidence are created for ease of operation.
-        """
-        # Initialise subordinator:
-        low = self.X.min()
-        high = self.X.max()
-        self.model.I.subordinator.initialise_proposal_samples(low, high, n_particles=self.model.n_particles)
-
-        # Initialise history:
-        super().initialise()
-
-        # Start iterations:
-        self.x_est[:, 0, :, :] = x_init
-        self.P_est[:, 0, :, :] = P_init
-
-    def initialise_iteration(self, i, t, x_init, P_init):
-        """This method initialises an iteration history attribute and sets the initial point given by a time t, mean vector x_init, covariance matrix P_init and a log_likelihood. 
-
-        An iteration may refer to any computation that involves a change in time for fixed model parameters or a change in model parameters for a fixed time interval.
-
-        The iteration history is a list of dictionaries of model parameters, time, mean vector, covariance matrix, log likelihood and jumps associated with separate time points
-        t and particles, i.e. an iteration may be index by time and particle id. 
-        
-        At the start of each iteration the iteration memory attribute is reset. Thus, it should be appended to the history attribute before this line.
-        """
-
-        # Compute log_likelihood of the estimates:
-        log_likelihood = self.log_marginal_conditional_likelihood(y=self.y[:, i], x_est=x_init, P_est=P_init)
-
-        # Initialise sampling history:
-        self.iteration_history = [self.model.get_parameter_values() | {"time":t, 
-                                                                        "mean":x_init, 
-                                                                        "cov":P_init, 
-                                                                        "log_likelihood":log_likelihood,
-                                                                        "t_series":self.model.I.subordinator.t_series, 
-                                                                         "x_series":self.model.I.subordinator.x_series
-                                                                     }
-                                ]
-        
-        self.iteration_log_evidence = [log_likelihood]
-
-    def log_marginal_conditional_likelihood(self, y, x_est, P_est):
-        # Compute the intermediate residual terms:
-        residual_pred = y - self.model.H @ x_est
-        residual_pred_cov = self.model.H @ P_est @ self.model.H.T + self.model.eps.covariance()
-
-        # Calculate log marginal likelihood:
-        log_det = np.linalg.slogdet(residual_pred_cov)[1].reshape(-3, 1, 1)
-        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[-2] * np.log(2 * np.pi))
-
-        return log_marginal_likelihood
-
-
-    def kalman_iteration(self, y, x_init, P_init, s, t, t_series, x_series):
-        """This method implements the prediction and correction steps of a Kalman filter iteration given proposed jump times and sizes. It returns the resulting mean
-        vector x_est, covariance matrix P_est and log_likelihood. 
-
-        The associated matrices for the state transition A, state noise covariance Q, observation matrix H and observation noise covariance are computed using the
-        model object.
-        """
-        A = self.model.expA(t - s)
-        noise_mean, Q = self.model.I.proposed_conditional_moments(s, t, t_series, x_series)
-
-        # Predict:
-        x_pred = A @ x_init + noise_mean
-        P_pred = A @ P_init @ A.T + Q
-
-        # Update:
-        residual_pred = y - self.model.H @ x_pred
-        residual_pred_cov = self.model.H @ P_pred @ self.model.H.T + self.model.eps.covariance()
-        kalman_gain = P_pred @ self.model.H.T @ invert_covariance(residual_pred_cov)
-
-        x_est = x_pred + kalman_gain @ residual_pred
-        P_est = (np.eye(x_init.shape[-2]) - kalman_gain @ self.model.H) @ P_pred
-
-        # Calculate log marginal likelihood:
-        log_det = np.linalg.slogdet(residual_pred_cov)[1].reshape(-3, 1, 1)
-        log_marginal_likelihood = -0.5 * (log_det + residual_pred @ invert_covariance(residual_pred_cov) @ residual_pred + y.shape[-2] * np.log(2 * np.pi))
-
-        return x_est, P_est, log_marginal_likelihood
+        return memory
     
-    def iteration_Gaussian_mixture_moments(self, burn_in=0):
-        """This method computes the Gaussian mixture mean and covariance of the MCMC samples in the current iteration_history.
+# Sequential Collapsed Gaussian MCMC class for normal variance-mean processes.
+
+class SequentialCollapsedGaussianMCMCFilter(InferenceModule):
+
+    def initialise_memory(self, mu_est, C_est, log_marginal_likelihood):
+
+        D = mu_est.shape[-2]
+        
+        field_names = ['filtered_mean', 'filtered_cov', 'log_marginal_likelihood']
+        field_dtypes = ['f4', 'f4', 'f4']
+        field_shapes = [(D, 1), (D, D), (1,1,1)]
+
+        datatype = np.dtype([(field_names[i], field_dtypes[i], field_shapes[i]) for i in range(len(field_names))])
+        memory = np.array([(mu_est, C_est, log_marginal_likelihood)], dtype=datatype)
+
+        return memory, datatype
+    
+    def initialise_chain(self, conditional_mean, conditional_cov, log_conditional_likelihood):
+
+        D = conditional_mean.shape[-2]
+
+        field_names = ['conditional_mean', 'conditional_cov', 'log_conditional_likelihood']
+        field_dtypes = ['f4', 'f4', 'f4']
+        field_shapes = [(D, 1), (D, D), (1,1,1)]
+
+        datatype = np.dtype([(field_names[i], field_dtypes[i], field_shapes[i]) for i in range(len(field_names))])
+        chain = np.array([(conditional_mean, conditional_cov, log_conditional_likelihood)], dtype=datatype)
+
+        return chain, datatype
+    
+    def get_Gaussian_mixture_moments(self, chain, burn_in=0):
+        """This method computes the Gaussian mixture mean and covariance of the MCMC samples in the current iteration.
         """
-        means = np.array([sample['mean'] for sample in self.iteration_history])[burn_in:][:,0,:,:]
+
+        means = chain['conditional_mean'][burn_in:]
+        covs = chain['conditional_cov'][burn_in:]
+
         post_mix_mean = means.mean(axis=0)
 
         residual_mean = (means - post_mix_mean)
         mixture_adjustment = residual_mean @ np.transpose(residual_mean, axes=(0,2,1))
 
-        post_mix_cov = (np.array([sample['cov'] for sample in self.iteration_history])[burn_in:][:,0,:,:] + mixture_adjustment).mean(axis=0)
+        post_mix_cov = (covs + mixture_adjustment).mean(axis=0)
 
         return post_mix_mean, post_mix_cov
 
-    def filter(self, times, y, x_init, P_init, n_samples=10, burn_in=0):
-        """This method provides the filtering functionality for changes in time with each time interval estimated using MCMC samples.
-        """
+    def filter(self, times, y, mu_prior, C_prior, n_samples=10, burn_in=0):
 
-        # Set training variables:
-        self.set_training_variables(y=y, X=times, Xeval=None)
-        self.set_state_dims(D=x_init.shape[-2])
+        # Acceptance probs.
+        acceptance_probs = []
+
+        # Flatten times.
+        times = times.flatten()
+
+        # Initialise filtering density and memory.
+        mu_est, C_est, log_marginal_likelihood = kalman_correction(y=y[0], mu_pred=mu_prior, C_pred=C_prior, H=self.model.H, Omega_eps=self.model.eps.covariance(t=times[0]))
+        memory, datatype = self.initialise_memory(mu_est, C_est, log_marginal_likelihood)
         
-        # Initialise history:
-        self.initialise(x_init, P_init)
+        chain_memory = []
 
-        extended_times = np.vstack((self.X[0]-1, self.X)) # This is required to include the prior on x_est(times=0-1). The choice of 1 reflects unit variance.
-        for i, t in enumerate(times, 0):
-            # Previous time step is s.
-            s = extended_times[i]
+        for i in range(1, times.shape[0]):
+            
+            # Set fixed model parameters for the time interval.
+            dt = (times[i] - times[i-1])
+            F = self.model.F(dt)
 
-            self.initialise_iteration(i=i, t=t, x_init=self.x_est[:, i], P_init=self.P_est[:, i])
+            # Propose model transition:
+            t_series, x_series = self.model.I.subordinator.simulate_points(rate=dt, low=times[i-1], high=times[i], n_particles=1)
+            m, Q = self.model.I.moments(s=times[i-1], t=times[i], n_particles=1, t_series=t_series, x_series=x_series)
 
-            # Start sampling:
+            mu_pred, C_pred = kalman_prediction(mu_init=memory['filtered_mean'][-1], C_init=memory['filtered_cov'][-1], F=F, m=m, Q=Q)
+            mu_est, C_est, log_marginal_likelihood = kalman_correction(y=y[i], mu_pred=mu_pred, C_pred=C_pred, H=self.model.H, Omega_eps=self.model.eps.covariance(times[i]))
+
+            chain, chain_datatype = self.initialise_chain(conditional_mean=mu_est, conditional_cov=C_est, log_conditional_likelihood=log_marginal_likelihood)
+
+            # Start sampling.
             for _ in range(n_samples):
                 
-                # Propose subordinator jumps:
-                proposal_t_series, proposal_x_series = self.model.I.subordinator.propose_subordinator((s[0],t[0]))
+                # Propose model transition:
+                t_series, x_series = self.model.I.subordinator.simulate_points(rate=dt, low=times[i-1], high=times[i], n_particles=1)
+                m, Q = self.model.I.moments(s=times[i-1], t=times[i], n_particles=1, t_series=t_series, x_series=x_series)
 
-                # Filtering:
-                ## x_init and P_init are always set to the previous times filtering estimate.
-                proposed_x_est, proposed_P_est, proposed_log_likelihood = self.kalman_iteration(y=self.y[:, i],
-                                                                                x_init=self.x_est[:, i],
-                                                                                P_init=self.P_est[:, i],
-                                                                                s=s, 
-                                                                                t=self.X[i],
-                                                                                t_series=proposal_t_series,
-                                                                                x_series=proposal_x_series
-                                                                            )
+                mu_pred, C_pred = kalman_prediction(mu_init=memory['filtered_mean'][-1], C_init=memory['filtered_cov'][-1], F=F, m=m, Q=Q)
+                mu_est, C_est, log_marginal_likelihood = kalman_correction(y=y[i], mu_pred=mu_pred, C_pred=C_pred, H=self.model.H, Omega_eps=self.model.eps.covariance(times[i]))
 
-                likelihood_ratio = np.exp(proposed_log_likelihood[:,0,0] - self.iteration_log_evidence[-1][:, 0, 0]).reshape(-1, 1)
-
-                acceptance_prob = np.min(np.concatenate((np.ones((likelihood_ratio.shape[0], 1)).reshape(-1, 1), likelihood_ratio), axis=1), axis=1)
+                # Metropolis-Hastings:
+                likelihood_ratio = np.exp(log_marginal_likelihood[0,0,0] - chain['log_conditional_likelihood'][-1][0, 0, 0])
+                
+                acceptance_prob = np.min([1., likelihood_ratio])
                 u = np.random.uniform(low=0.0, high=1.0)
 
+                acceptance_probs.append(acceptance_prob)
+
                 if u < acceptance_prob:
-                    # Set subordinator using proposed jumps:
-                    self.model.I.subordinator.set_proposal_samples(proposal_t_series, proposal_x_series)
 
-                    self.iteration_log_evidence.append(proposed_log_likelihood)
-                    self.iteration_history.append(self.model.get_parameter_values() | {"time":t, 
-                                                                                       "mean":proposed_x_est, 
-                                                                                       "cov":proposed_P_est, 
-                                                                                       "t_series":proposal_t_series, 
-                                                                                       "x_series":proposal_x_series
-                                                                                      }
-                                                 )
+                    # Save proposed variables:
+                    chain = np.concatenate((chain, np.array([(mu_est, C_est, log_marginal_likelihood)], dtype=chain_datatype)))
+
                 else:
-                    self.iteration_log_evidence.append(self.iteration_log_evidence[-1])
-                    self.iteration_history.append(self.iteration_history[-1])
 
-            # Compute filtering estimate as a collapsed Gaussian:
-            self.x_est[:, i+1], self.P_est[:, i+1] = self.iteration_Gaussian_mixture_moments(burn_in=burn_in)
+                    # Save previous variables:
+                    chain = np.concatenate((chain, np.array([(chain['conditional_mean'][-1], chain['conditional_cov'][-1], chain['log_conditional_likelihood'][-1])], dtype=chain_datatype)))
 
-            # Save log_evidence and iteration history:
-            self.log_evidence.append(self.iteration_log_evidence)
-            self.history.append(self.iteration_history)
+            # Compute Gaussian mixture moments.
+            mix_log_likelihood = chain['log_conditional_likelihood'].mean(axis=0)
+            post_mix_mean, post_mix_cov = self.get_Gaussian_mixture_moments(chain, burn_in=burn_in)
 
-        return self.history
-    
+            # Save variables:
+            memory = np.concatenate((memory, np.array([(post_mix_mean, post_mix_cov, mix_log_likelihood)], dtype=datatype)))
+            chain_memory.append(chain)
 
-# Base particle filtering class:
+        self.acceptance_rates = acceptance_probs
 
-class ParticleFilter(InferenceModule):
-
-    def initialise(self, particle_config, N, **kwargs):
-
-        # Initialise sampling history:
-        self.history = []
-  
-        # Initialise particles:
-        self.particles = Particles(config=particle_config, N=N)
-        self.particles.update_particles(**kwargs)
-
-
-
-class MarginalisedParticleFilter(KalmanFilter):
-    pass
+        return memory, chain_memory

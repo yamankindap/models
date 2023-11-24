@@ -932,7 +932,7 @@ class GeneralisedInverseGaussianProcess(LevyProcess):
     def propose_subordinator(self, proposal_interval):
         """On the given interval, removes the previous points and simulates new random points. Returns the proposal points.
         NOTE that this function only works when there is a single particle under consideration. This may be fixed by
-        finding a method to keep the shape of x_series constant while applying conditional selection.
+        finding a method to keep the shape of x_series constant while applying conditional selection. Similar to how conditional moments are computed.
         """
         conditioning_x_series = self.x_series[(proposal_interval[1] < self.t_series)]
         conditioning_x_series = np.concatenate((conditioning_x_series, self.x_series[(self.t_series < proposal_interval[0])])).reshape(1, -1)

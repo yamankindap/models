@@ -2,113 +2,22 @@ import numpy as np
 
 from primitive.linalg import LinearOperator
 
-from stochastic.integrals import NormalVarianceMeanProcessDrivenIntegral, BrownianMotionDrivenIntegral
-from stochastic.variables import GaussianNoise
+from stochastic.integrals import BrownianMotionDrivenIntegral, EnsembleBrownianMotionDrivenIntegral, NormalVarianceMeanProcessDrivenIntegral
+from stochastic.variables import GaussianNoise, EnsembleGaussianNoise
 
-# Base State space model object:
+# Custom linear operator components for a state-space model.
 
-class BaseStateSpaceModel:
-
-    def __init__(self, **kwargs):
-        """A state-space model (SSM) is defined as
-
-            X(t) = A X(s) + I(s, t)
-            Y(t) = H X(t) + eps(t)
-
-        To initialise an SSM, the required keyword arguments are A, I, H, and eps. 
-
-        The argument A must be a LinearOperator object that has a valid compute_matrix method.
-
-        The argument I is a ForcingFunction object defined in stochastic.integrals.py. It represents a stochastic integral that can be sampled given a time interval (s, t).
-
-        The argument H is a fixed numpy array with the correct dimensions. It can be generalised to a LinearOperator if a parameterised matrix is required.
-
-        The argument eps is a random variable that is implemented as a Noise object defined in stochastic.variables.py. It may in general be time dependent.
-        """
-        # System transition matrix
-        self.A = kwargs.get("A", None)
-
-        # System forcing function (stochastic integral)
-        self.I = kwargs.get("I", None)
-
-        # Measurement matrix
-        self.H = kwargs.get("H", None)
-
-        # Measurement noise:
-        self.eps = kwargs.get("eps", None)
-
-    def set_configuration(self, **kwargs):
-        # System transition matrix
-        self.A = kwargs.get("A", None)
-
-        # System forcing function
-        self.I = kwargs.get("I", None)
-
-        # Measurement matrix
-        self.H = kwargs.get("H", None)
-
-        # Measurement noise:
-        self.eps = kwargs.get("eps", None)
+class VelocitySelector(LinearOperator):
+    parameter_keys = ["shape"]
 
     def get_parameter_values(self):
-        pass
-    
-    def set_parameter_values(self, **kwargs):
-        pass
-
-    def sample(self, times, size=1):
-        """The assumption that x_init is always zeros is not fully general. The transition function is dependent on the actual value of x[0]. Hence the
-        function assumes that times[0] = 0. and times has at least two values.
-        """
-        # Initialise state and measurement arrays:
-        ## The number of columns in x_init should be configurable.
-        ## We assume that X starts with [0 ... 0]^T
-        x_init = np.zeros((self.A.shape[1], 1))
-
-        ## The third dimension of this array has to be same as the number of columns in x_init.
-        x = np.zeros(shape=(size, times.shape[0], x_init.shape[0], 1))
-
-        ## The number of columns in y should be configurable.
-        y = np.zeros(shape=(size, times.shape[0], self.H.shape[0], 1))
-
-        x[:,0] = x_init
-        y[:,0] = self.H @ x[:, 0] + self.eps(t=times[0])
-
-        for i in range(1, times.shape[0]):
-            dt = times[i] - times[i-1]
-
-            x[:,i] = self.A(dt) @ x[:,i-1] + self.I(s=times[i-1], t=times[i], n_particles=size)
-            y[:,i] = self.H @ x[:,i] + self.eps(t=times[i])
-
-        return x, y
-
-# Vector SDE model definitions:
-
-# The h_vector selects the state dimension that a stochastic process directly forces. 
-# The default h_vector defined here only selects the last dimension of the state.
-
-class h_vector(LinearOperator):
-    parameter_keys = ["shape", "indicator_dim", "value"]
-
-    def __init__(self, shape=(2,1)):
-        super().__init__(**{"shape":shape, "indicator_dim":(-1,0), "value":1.})
-
-    def get_parameter_values(self):
-        # There are no parameters in the h vector for Langevin dynamics.
+        # There are no parameters in the L vector for Constant velocity and Langevin dynamics models.
         return {}
-
-    def compute_matrix(self, dt=None):
-        h = np.zeros(self.shape)
-        h[self.indicator_dim[0]][self.indicator_dim[1]] = self.value
-        return h
     
-
-# INCOMPLETE 
-# The compute_matrix methods are manually defined for 2 dimensional cases.
-
-# Constant velocity model definitions:
-
-## Linear operators for the Constant velocity model
+    def compute_matrix(self, dt=None):
+        L = np.zeros(self.shape)
+        L[-1, 0] = 1.
+        return L
 
 class expA_ConstantVelocity(LinearOperator):
     parameter_keys = ["shape"]
@@ -119,7 +28,7 @@ class expA_ConstantVelocity(LinearOperator):
         expA[0][1] = dt
         expA[1][1] = 1.
         return expA
-    
+
 class Q_ConstantVelocity(LinearOperator):
     parameter_keys = ["shape"]
 
@@ -130,84 +39,7 @@ class Q_ConstantVelocity(LinearOperator):
         Q[1][0] = dt**2 / 2
         Q[1][1] = dt
         return Q
-
-## Constant velocity model object:
-
-class BrownianConstantVelocityModel(BaseStateSpaceModel):
-
-    def __init__(self, sigma=1., sigma_eps=0.1, shape=(2,1)):
-
-        # State-space model attributes:
-        self.expA = expA_ConstantVelocity(**{"shape":(shape[0], shape[0])})
-        self.h = h_vector(shape=(shape[0], 1))
-        self.ft = lambda dt: self.expA(dt) @ self.h()
-        self.unit_Q = Q_ConstantVelocity(**{"shape":(shape[0], shape[0])})
-
-        # System noise
-        system_noise = BrownianMotionDrivenIntegral(**{"shape":shape, "sigma":sigma, "type":"analytical"})
-        system_noise.set_unit_noise_covariance(Q=self.unit_Q)
-        
-        # Observation model
-        H = np.zeros((1,2))
-        H[0][0] = 1
-
-        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(1,1), "sigma_eps":sigma_eps})}
-        super().__init__(**config)
-
-    def get_parameter_values(self):
-        return self.I.get_parameter_values() | self.eps.get_parameter_values()
     
-    def set_parameter_values(self, **kwargs):
-        self.I.set_parameter_values(**kwargs)
-        self.eps.set_parameter_values(**kwargs)
-
-## The only significant difference of this object from NVMLangevinModel is self.expA. There may be a better way to implement this.
-
-class NVMConstantVelocityModel(BaseStateSpaceModel):
-
-    def __init__(self, subordinator, mu=0., sigma=1., sigma_eps=0.1, shape=(2,1), n_particles=1):
-
-        # Number of independent particles:
-        self.n_particles = n_particles
-
-        # State-space model attributes:
-        self.expA = expA_ConstantVelocity(**{"shape":(shape[0], shape[0])})
-        self.h = h_vector(shape=(shape[0], 1))
-        self.ft = lambda dt: self.expA(dt) @ self.h()
-
-        # System noise
-        system_noise = NormalVarianceMeanProcessDrivenIntegral(**{"shape":shape, "mu":mu, "sigma":sigma, "subordinator":subordinator})
-        system_noise.set_ssm_attributes(h=self.h, ft=self.ft, expA=self.expA)
-
-        # Observation model
-        H = np.zeros((1,2))
-        H[0][0] = 1
-
-        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(n_particles, 1, 1), "sigma_eps":sigma_eps})}
-        super().__init__(**config)
-
-    def get_parameter_values(self):
-        return self.I.get_parameter_values() | self.eps.get_parameter_values()
-    
-    def set_parameter_values(self, **kwargs):
-        self.I.set_parameter_values(**kwargs)
-        self.eps.set_parameter_values(**kwargs)
-
-    def sample(self, times, size=1):
-        # Initialise the subordinator jumps
-        low = np.min(times)
-        high = np.max(times)
-        self.I.subordinator.initialise_proposal_samples(low=low, high=high, n_particles=size)
-
-        x, y = super().sample(times=times, size=size)
-
-        return x, y
-
-
-# Langevin model definitions:
-
-## Linear operators for the Langevin model
-
 class expA_Langevin(LinearOperator):
     parameter_keys = ["shape", "theta"]
 
@@ -224,80 +56,312 @@ class Q_Langevin(LinearOperator):
     def compute_matrix(self, dt):
         Q = np.zeros(self.shape)
         K = -1. * self.theta
-
         Q[0][0] = ( dt - (2/K) * (1 - np.exp(self.theta*dt)) + (1/(2*K)) * (1 - np.exp(2*self.theta*dt)) ) / K**2
         Q[0][1] = ( (1/K) * (1 - np.exp(self.theta*dt)) - (1/(2*K)) * (1 - np.exp(2*self.theta*dt)) ) / K
         Q[1][0] = Q[0][1]
         Q[1][1] = (1 - np.exp(2*self.theta*dt)) / (2*K)
         return Q
 
-## Langevin model object:
 
-class BrownianLangevinModel(BaseStateSpaceModel):
+# Base state-space model object:
 
-    def __init__(self, theta, sigma=1., sigma_eps=0.1, shape=(2,1)):
+class BaseStateSpaceModel:
 
-        # State-space model attributes:
-        self.expA = expA_Langevin(**{"shape":(shape[0], shape[0]), "theta":theta})
-        self.h = h_vector(shape=(shape[0], 1))
-        self.ft = lambda dt: self.expA(dt) @ self.h()
-        self.unit_Q = Q_Langevin(**{"shape":(shape[0], shape[0]), "theta":theta})
+    def __init__(self, **kwargs):
+        """The BaseStateSpaceModel contains all essential functionality and definitions of a state-space model (SSM) for a linear system defined as
 
-        # System noise
-        system_noise = BrownianMotionDrivenIntegral(**{"shape":shape, "sigma":sigma, "type":"analytical"})
-        system_noise.set_unit_noise_covariance(Q=self.unit_Q)
-        
-        # Observation model
-        H = np.zeros((1,2))
+            X(t) = F X(s) + I(s, t)
+            Y(t) = H X(t) + eps(t)
+
+        To initialise an SSM, the required keyword arguments are 'F', 'I', 'H', and 'eps'. 
+
+        The state X at each t is assumed to have shape (D,1) or (Np, D, 1) where Np is the number of particles and D is the state dimensions.
+        The observations Y at each t is assumed to have shape (D_prime, 1) where D_prime is the observation dimensions.
+
+        - Linear dynamical model.
+        The argument 'F' is the state transition matrix. It must be a LinearOperator object that has a valid compute_matrix method which returns a
+        matrix of shape (D, D). 
+
+        The argument 'I' is a StochasticIntegral object defined in stochastic.integrals.py which is a high level wrapper for random driving forces.
+        It can be used to sample random points and (possibly random) moments for a time interval (s, t) which returns a numpy array with shape (D, 1) or 
+        (Np, D, 1) for points and means. The covariance will have shape (D, D) or (Np, D, D).
+
+        - Linear observation model.
+        The argument 'H' is the linear observation model expressed as a LinearOperator or a standard matrix with dimensions (D_prime, D). It is alternatively
+        referred as the feature matrix in standard linear models.
+
+        The argument eps is the observation noise that is implemented as a RandomVariable object defined in stochastic.variables.py. It may in general be time dependent.
+        It can be used to sample random variables with shape (D_prime, 1) or (Np, D_prime, D_prime). For (D_prime, 1), it is assumed that the noise term is shared
+        between particles if Np > 1.
+        It can also be used to sample the associated mean with shape (D_prime, 1) or (Np, D_prime, 1) and covariance with shape (D_prime, D_prime) or (Np, D_prime, D_prime).
+        """
+        # System transition matrix
+        self.F = kwargs.get("F", None)
+
+        # System forcing function (stochastic integral)
+        self.I = kwargs.get("I", None)
+
+        # Measurement matrix
+        self.H = kwargs.get("H", None)
+
+        # Measurement noise:
+        self.eps = kwargs.get("eps", None)
+
+    def set_configuration(self, **kwargs):
+        """This method is provided to set the main SSM attributes. 
+
+        REQUIRED EDIT: Instead of setting all attributes, only change given attributes.
+        """
+        # System transition matrix
+        self.F = kwargs.get("F", None)
+
+        # System forcing function
+        self.I = kwargs.get("I", None)
+
+        # Measurement matrix
+        self.H = kwargs.get("H", None)
+
+        # Measurement noise:
+        self.eps = kwargs.get("eps", None)
+
+    def get_parameter_values(self):
+        """The BaseStateSpaceModel does not have any parameters. Classes that inherit from BaseStateSpaceModel should implement a custom method.
+
+        REQUIRED EDIT: The base model can return all parameters instead of not doing anything.
+        """
+        pass
+    
+    def set_parameter_values(self, **kwargs):
+        """The BaseStateSpaceModel does not have any parameters. Classes that inherit from BaseStateSpaceModel should implement a custom method.
+
+        REQUIRED EDIT: The base model can return all parameters instead of not doing anything.
+        """
+        pass
+
+    def propose(self, times, x_init, n_particles=1):
+        """The propose method implements forward simulation of the state dynamics.
+        """
+        # Ensure times is 1-dimensional.
+        times = times.flatten()
+
+        # Initialise the state array with zeros.
+        X = np.zeros(shape=(times.shape[0], n_particles, x_init.shape[-2], 1))
+
+        X[0,:] = x_init
+
+        for i in range(1, times.shape[0]):
+            dt = (times[i] - times[i-1])
+            X[i,:] = self.F(dt) @ X[i-1,:] + self.I(s=times[i-1], t=times[i], n_particles=n_particles)
+        return X[1:,:]
+
+    def sample(self, times, x_init, n_particles=1):
+        """The sample method implements forward simulation of the SSM.
+
+        The keyword argument 'times' is assumed to have shape (N,1), 'x_init' has shape (D,1) or (Np, D, 1) where Np is equal to 'n_particles'. 
+
+        If 'x_init' has shape (Np, D, 1) 'n_particles' must be equal to Np. The method currently does NOT assert this.
+
+        REQUIRED EDIT: remove the particles dimension if n_particles=1 before returning.
+        """
+
+        # Ensure times is 1-dimensional.
+        times = times.flatten()
+
+        # Initialise the state and observation arrays with zeros.
+        X = np.zeros(shape=(times.shape[0], n_particles, x_init.shape[-2], 1))
+        Y = np.zeros(shape=(times.shape[0], n_particles, self.H.shape[-2], 1))
+
+        # Assign the given initial array of points as the initial state. 
+        ## If 'x_init' has shape (D, 1) it will be broadcast to (Np, D, 1).
+        X[0,:] = x_init
+
+        # Generate observations associated with the initial state.
+        Y[0,:] = self.H @ X[0,:] + self.eps(t=times[0], n_particles=n_particles)
+
+        # Forward simulation of states and observation generation.
+        for i in range(1, times.shape[0]):
+            dt = (times[i] - times[i-1])
+
+            X[i,:] = self.F(dt) @ X[i-1,:] + self.I(s=times[i-1], t=times[i], n_particles=n_particles)
+            Y[i,:] = self.H @ X[i,:] + self.eps(t=times[i], n_particles=n_particles)
+
+        return X, Y
+    
+
+class BaseLevyStateSpaceModel(BaseStateSpaceModel):
+
+    def propose(self, times, x_init, n_particles=1):
+        """The propose method implements forward simulation of the state dynamics.
+        """
+        # Ensure times is 1-dimensional.
+        times = times.flatten()
+
+        # Initialise the state array with zeros.
+        X = np.zeros(shape=(times.shape[0], n_particles, x_init.shape[-2], 1))
+
+        # Initialise jump times and sizes.
+        _t_series = np.zeros((n_particles, 1))
+        _x_series = np.zeros((n_particles, 1))
+
+        X[0,:] = x_init
+
+        for i in range(1, times.shape[0]):
+            dt = (times[i] - times[i-1])
+            dW, t_series, x_series = self.I._sample(s=times[i-1], t=times[i], n_particles=n_particles)
+
+            X[i,:] = self.F(dt) @ X[i-1,:] + dW
+
+            _t_series = np.concatenate((_t_series, t_series), axis=1)
+            _x_series = np.concatenate((_x_series, x_series), axis=1)
+
+        return X[1:,:], _t_series, _x_series
+
+    def sample(self, times, x_init, n_particles=1):
+        """The sample method implements forward simulation of the SSM.
+
+        The keyword argument 'times' is assumed to have shape (N,1), 'x_init' has shape (D,1) or (Np, D, 1) where Np is equal to 'n_particles'. 
+
+        If 'x_init' has shape (Np, D, 1) 'n_particles' must be equal to Np. The method currently does NOT assert this.
+
+        REQUIRED EDIT: remove the particles dimension if n_particles=1 before returning.
+        """
+
+        # Ensure times is 1-dimensional.
+        times = times.flatten()
+
+        # Initialise the state and observation arrays with zeros.
+        X = np.zeros(shape=(times.shape[0], n_particles, x_init.shape[-2], 1))
+        Y = np.zeros(shape=(times.shape[0], n_particles, self.H.shape[-2], 1))
+
+        # Initialise jump times and sizes.
+        _t_series = np.zeros((n_particles, 1))
+        _x_series = np.zeros((n_particles, 1))
+
+        # Assign the given initial array of points as the initial state. 
+        ## If 'x_init' has shape (D, 1) it will be broadcast to (Np, D, 1).
+        X[0,:] = x_init
+
+        # Generate observations associated with the initial state.
+        Y[0,:] = self.H @ X[0,:] + self.eps(t=times[0], n_particles=n_particles)
+
+        # Forward simulation of states and observation generation.
+        for i in range(1, times.shape[0]):
+            dt = (times[i] - times[i-1])
+            dW, t_series, x_series = self.I._sample(s=times[i-1], t=times[i], n_particles=n_particles)
+
+            X[i,:] = self.F(dt) @ X[i-1,:] + dW
+            Y[i,:] = self.H @ X[i,:] + self.eps(t=times[i], n_particles=n_particles)
+
+            _t_series = np.concatenate((_t_series, t_series), axis=1)
+            _x_series = np.concatenate((_x_series, x_series), axis=1)
+
+        return X, Y, _t_series, _x_series
+
+
+
+
+# Custom state-space model objects:
+
+## Constant velocity model objects:
+
+class BrownianConstantVelocityModel(BaseStateSpaceModel):
+
+    def __init__(self, sigma=1., sigma_eps=0.1, D=2, D_prime=1):
+
+        # Define state transition dynamics:
+        F = expA_ConstantVelocity(**{"shape":(D, D)})
+        Q = Q_ConstantVelocity(**{"shape":(D, D)})
+        I = EnsembleBrownianMotionDrivenIntegral(**{"shape":(D, 1), "sigma":sigma, "Q":Q})
+
+        # Define observation model:
+        H = np.zeros((D_prime,D))
         H[0][0] = 1
+        eps = EnsembleGaussianNoise(**{"shape":(D_prime,1), "sigma_eps":sigma_eps})
 
-        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(1,1), "sigma_eps":sigma_eps})}
+        config = {"F":F, "I":I, "H":H, "eps":eps}
         super().__init__(**config)
 
     def get_parameter_values(self):
-        return self.expA.get_parameter_values() | self.I.get_parameter_values() | self.eps.get_parameter_values()
+        return self.I.get_parameter_values() | self.eps.get_parameter_values()
     
     def set_parameter_values(self, **kwargs):
-        self.expA.set_parameter_values(**kwargs)
+        self.I.set_parameter_values(**kwargs)
+        self.eps.set_parameter_values(**kwargs)
+
+class NVMConstantVelocityModel(BaseLevyStateSpaceModel):
+
+    def __init__(self, subordinator, mu=0., sigma=1., sigma_eps=0.1, D=2, D_prime=1):
+
+        # Define state transition dynamics:
+        F = expA_ConstantVelocity(**{"shape":(D, D)})
+        L = VelocitySelector(shape=(D,1))
+        I = NormalVarianceMeanProcessDrivenIntegral(**{"shape":(D, 1), "mu":mu, "sigma":sigma, "subordinator":subordinator, "expA":F, "L":L})
+
+        # Define observation model:
+        H = np.zeros((D_prime,D))
+        H[0][0] = 1
+        eps = EnsembleGaussianNoise(**{"shape":(D_prime,1), "sigma_eps":sigma_eps})
+
+        config = {"F":F, "I":I, "H":H, "eps":eps}
+        super().__init__(**config)
+
+    def get_parameter_values(self):
+        return self.I.get_parameter_values() | self.eps.get_parameter_values()
+    
+    def set_parameter_values(self, **kwargs):
         self.I.set_parameter_values(**kwargs)
         self.eps.set_parameter_values(**kwargs)
 
 
-class NVMLangevinModel(BaseStateSpaceModel):
+## Langevin model objects:
 
-    def __init__(self, subordinator, theta, mu=0., sigma=1., sigma_eps=0.1, shape=(2,1), n_particles=1):
+class BrownianLangevinModel(BaseStateSpaceModel):
 
-        # Number of independent particles:
-        self.n_particles = n_particles
+    def __init__(self, theta, sigma=1., sigma_eps=0.1, D=2, D_prime=1):
 
-        # State-space model attributes:
-        self.expA = expA_Langevin(**{"shape":(shape[0], shape[0]), "theta":theta})
-        self.h = h_vector(shape=(shape[0], 1))
-        self.ft = lambda dt: self.expA(dt) @ self.h()
+        # Define state transition dynamics:
+        F = expA_Langevin(**{"shape":(D, D), "theta":theta})
+        Q = Q_Langevin(**{"shape":(D, D), "theta":theta})
+        I = EnsembleBrownianMotionDrivenIntegral(**{"shape":(D, 1), "sigma":sigma, "Q":Q})
 
-        # System noise
-        system_noise = NormalVarianceMeanProcessDrivenIntegral(**{"shape":shape, "mu":mu, "sigma":sigma, "subordinator":subordinator})
-        system_noise.set_ssm_attributes(h=self.h, ft=self.ft, expA=self.expA)
-
-        # Observation model
-        H = np.zeros((1,2))
+        # Define observation model:
+        H = np.zeros((D_prime,D))
         H[0][0] = 1
+        eps = EnsembleGaussianNoise(**{"shape":(D_prime,1), "sigma_eps":sigma_eps})
 
-        config = {"A":self.expA, "I":system_noise, "H":H, "eps":GaussianNoise(**{"shape":(n_particles, 1, 1), "sigma_eps":sigma_eps})}
+        config = {"F":F, "I":I, "H":H, "eps":eps}
         super().__init__(**config)
 
     def get_parameter_values(self):
-        return self.expA.get_parameter_values() | self.I.get_parameter_values() | self.eps.get_parameter_values()
+        return self.F.get_parameter_values() | self.I.get_parameter_values() | self.eps.get_parameter_values()
     
     def set_parameter_values(self, **kwargs):
-        self.expA.set_parameter_values(**kwargs)
+        self.F.set_parameter_values(**kwargs)
+        self.I.set_parameter_values(**kwargs)
+        self.eps.set_parameter_values(**kwargs)
 
-    def sample(self, times, size=1):
-        # Initialise the subordinator jumps
-        low = np.min(times)
-        high = np.max(times)
-        self.I.subordinator.initialise_proposal_samples(low=low, high=high, n_particles=size)
+class NVMLangevinModel(BaseLevyStateSpaceModel):
 
-        x, y = super().sample(times=times, size=size)
+    def __init__(self, subordinator, theta, mu=0., sigma=1., sigma_eps=0.1, D=2, D_prime=1):
 
-        return x, y
+        # Define state transition dynamics:
+        F = expA_Langevin(**{"shape":(D, D), "theta":theta})
+        L = VelocitySelector(shape=(D,1))
+        I = NormalVarianceMeanProcessDrivenIntegral(**{"shape":(D, 1), "mu":mu, "sigma":sigma, "subordinator":subordinator, "expA":F, "L":L})
+
+        # Define observation model:
+        H = np.zeros((D_prime,D))
+        H[0][0] = 1
+        eps = EnsembleGaussianNoise(**{"shape":(D_prime,1), "sigma_eps":sigma_eps})
+
+        config = {"F":F, "I":I, "H":H, "eps":eps}
+        super().__init__(**config)
+
+    def get_parameter_values(self):
+        return self.F.get_parameter_values() | self.I.get_parameter_values() | self.eps.get_parameter_values()
+    
+    def set_parameter_values(self, **kwargs):
+        self.F.set_parameter_values(**kwargs)
+        self.I.set_parameter_values(**kwargs)
+        self.eps.set_parameter_values(**kwargs)
+
