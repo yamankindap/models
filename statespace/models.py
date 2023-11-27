@@ -234,8 +234,7 @@ class BaseLevyStateSpaceModel(BaseStateSpaceModel):
         Y = np.zeros(shape=(times.shape[0], n_particles, self.H.shape[-2], 1))
 
         # Initialise jump times and sizes.
-        _t_series = np.zeros((n_particles, 1))
-        _x_series = np.zeros((n_particles, 1))
+        t_series, x_series = self.I.subordinator.initialise_jumps(n_particles)
 
         # Assign the given initial array of points as the initial state. 
         ## If 'x_init' has shape (D, 1) it will be broadcast to (Np, D, 1).
@@ -247,17 +246,14 @@ class BaseLevyStateSpaceModel(BaseStateSpaceModel):
         # Forward simulation of states and observation generation.
         for i in range(1, times.shape[0]):
             dt = (times[i] - times[i-1])
-            dW, t_series, x_series = self.I._sample(s=times[i-1], t=times[i], n_particles=n_particles)
+            dW, t_series_extension, x_series_extension = self.I._sample(s=times[i-1], t=times[i], n_particles=n_particles)
 
             X[i,:] = self.F(dt) @ X[i-1,:] + dW
             Y[i,:] = self.H @ X[i,:] + self.eps(t=times[i], n_particles=n_particles)
 
-            _t_series = np.concatenate((_t_series, t_series), axis=1)
-            _x_series = np.concatenate((_x_series, x_series), axis=1)
+            t_series, x_series = self.I.subordinator.add_jumps(t_series, x_series, t_series_extension, x_series_extension)
 
-        return X, Y, _t_series, _x_series
-
-
+        return X, Y, t_series, x_series
 
 
 # Custom state-space model objects:
