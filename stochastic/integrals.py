@@ -193,25 +193,17 @@ class NormalVarianceMeanProcessDrivenIntegral(StochasticIntegral):
     def moments(self, s, t, n_particles, t_series, x_series):
         """Returns the means and covariances associated with a time interval (s,t). 
         These objects have shapes (Np, D, 1) and (Np, D, D).
+
+        The function assumes that the given t_series only contains jumps in (s, t). Such a series can be created from a t_series
+        object using the get_jumps_between method of LevyProcess objects.
         """
-        # Remove the jump times and sizes outside of the considered interval by setting them to NaN.
-        mask = (s < t_series) & (t_series <= t)
-        # Additionally remove any jumps that have zero size.
-        mask = mask & (x_series > 0)
-
-        t_series = np.where(mask, t_series, np.nan)
-        x_series = np.where(mask, x_series, np.nan)
-
         mean = np.zeros((n_particles, self.L.shape[0], 1))
         cov = np.zeros((n_particles, self.expA.shape[0], self.expA.shape[1]))
-        for i in range(x_series.shape[0]):
-            # mask_i = np.isnan(x_series[i])
-            valid_t_series = t_series[i][~np.isnan(x_series[i])]
-            valid_x_series = x_series[i][~np.isnan(x_series[i])]
-            for j in range(valid_x_series.size):
-                mat = self.ft(t-valid_t_series[j])
-                mean[i] += mat @ np.array([[self.mu]]) @ np.array([[valid_x_series[j]]])
-                cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[valid_x_series[j]]])
+        for i in range(n_particles):
+            for j in range(x_series[i].size):
+                mat = self.ft(t-t_series[i][j])
+                mean[i] += mat @ np.array([[self.mu]]) @ np.array([[x_series[i][j]]])
+                cov[i] += mat @ mat.T * np.array([[self.sigma**2]]) * np.array([[x_series[i][j]]])
         return mean, cov
 
     def sample(self, s=None, t=None, n_particles=1):
