@@ -196,6 +196,8 @@ class NormalVarianceMeanProcessDrivenIntegral(StochasticIntegral):
 
         The function assumes that the given t_series only contains jumps in (s, t). Such a series can be created from a t_series
         object using the get_jumps_between method of LevyProcess objects.
+
+        It also assumes that the driving NVM process is one dimensional.
         """
         mean = np.zeros((n_particles, self.L.shape[0], 1))
         cov = np.zeros((n_particles, self.expA.shape[0], self.expA.shape[1]))

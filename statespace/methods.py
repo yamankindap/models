@@ -3,6 +3,8 @@ import numpy as np
 from primitive.linalg import invert_covariance
 from primitive.methods import InferenceModule
 
+from scipy.special import logsumexp
+
 # Kalman filtering recursion functions:
 
 def kalman_prediction(mu_init, C_init, F, m, Q):
@@ -206,3 +208,71 @@ class SequentialCollapsedGaussianMCMCFilter(InferenceModule):
         self.acceptance_rates = acceptance_probs
 
         return memory, chain_memory
+
+class MarginalisedParticleFilter(InferenceModule):
+
+    def initialise_memory(self, mu_est, C_est, log_marginal_likelihood, n_realisations):
+
+        D = mu_est.shape[-2]
+        weights = np.exp(self.get_normalised_log_weights(log_marginal_likelihood))[:,0,0]
+        post_mix_mean, post_mix_cov = self.get_weighted_Gaussian_mixture_moments(mu_est, C_est, weights)
+        
+        field_names = ['particle_means', 'particle_covs', 'log_marginal_likelihoods', 'filtered_mean', 'filtered_cov']
+        field_dtypes = ['f4', 'f4', 'f4', 'f4', 'f4']
+        field_shapes = [(n_realisations, D, 1), (n_realisations, D, D), (n_realisations,1,1), (D, 1), (D, D)]
+
+        datatype = np.dtype([(field_names[i], field_dtypes[i], field_shapes[i]) for i in range(len(field_names))])
+        memory = np.array([(mu_est, C_est, log_marginal_likelihood, post_mix_mean, post_mix_cov)], dtype=datatype)
+
+        return memory, datatype
+    
+    def get_normalised_log_weights(self, log_likelihood):
+        normalisation_constant = logsumexp(log_likelihood)
+        return log_likelihood - normalisation_constant
+
+    def get_weighted_Gaussian_mixture_moments(self, means, covs, weights):
+        """This method computes the weighted Gaussian mixture mean and covariance of the particles at a single iteration.
+        """
+        post_mix_mean = np.average(means, axis=0, weights=weights)
+
+        residual_mean = (means - post_mix_mean)
+        mixture_adjustment = residual_mean @ np.transpose(residual_mean, axes=(0,2,1))
+        weighted_mixture_adjustment = np.average(mixture_adjustment, axis=0, weights=weights)
+        weighted_covs = np.average(covs, axis=0, weights=weights)
+
+        post_mix_cov = weighted_covs + weighted_mixture_adjustment
+
+        return post_mix_mean, post_mix_cov
+    
+    def filter(self, times, y, mu_prior, C_prior, n_particles=10):
+
+        # Flatten times.
+        times = times.flatten()
+
+        # Initialise filtering density and memory.
+        mu_est, C_est, log_marginal_likelihood = kalman_correction(y=y[0], mu_pred=mu_prior, C_pred=C_prior, H=self.model.H, Omega_eps=self.model.eps.covariance(t=times[0]))
+        memory, datatype = self.initialise_memory(mu_est=mu_est, C_est=C_est, log_marginal_likelihood=log_marginal_likelihood, n_realisations=n_particles)
+
+        for i in range(1, times.shape[0]):
+            
+            # Set fixed model parameters for the time interval.
+            dt = (times[i] - times[i-1])
+            F = self.model.F(dt)
+
+            # Propose model transition:
+            t_series, x_series = self.model.I.subordinator.simulate_points(rate=dt, low=times[i-1], high=times[i], n_particles=n_particles)
+            m, Q = self.model.I.moments(s=times[i-1], t=times[i], n_particles=n_particles, t_series=t_series, x_series=x_series)
+
+            mu_pred, C_pred = kalman_prediction(mu_init=memory['filtered_mean'][-1], C_init=memory['filtered_cov'][-1], F=F, m=m, Q=Q)
+            mu_est, C_est, log_marginal_likelihood = kalman_correction(y=y[i], mu_pred=mu_pred, C_pred=C_pred, H=self.model.H, Omega_eps=self.model.eps.covariance(times[i]))
+
+            weights = np.exp(self.get_normalised_log_weights(log_marginal_likelihood))[:,0,0]
+
+            # Compute Gaussian mixture moments.
+            post_mix_mean, post_mix_cov = self.get_weighted_Gaussian_mixture_moments(means=mu_est, covs=C_est, weights=weights)
+
+            # Save variables:
+            memory = np.concatenate((memory, np.array([(mu_est, C_est, log_marginal_likelihood, post_mix_mean, post_mix_cov)], dtype=datatype)))
+
+        return memory
+    
