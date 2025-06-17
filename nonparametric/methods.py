@@ -131,7 +131,8 @@ class MH_Within_Gibbs_sampler_for_NGP(InferenceModule):
         # Initialise subordinator:
         low = self.Xeval.min()
         high = self.Xeval.max()
-        self.model.subordinator.initialise_proposal_samples(low, high)
+        # self.model.subordinator.initialise_proposal_samples(low, high)
+        self.model.subordinator.t_series, self.model.subordinator.x_series = self.model.subordinator.simulate_points(rate=(high-low), low=low, high=high, n_particles=1)
         
         # Conditional GP inference step:
         mean, cov, log_marginal_likelihood = self.model.posterior_density(self.y, self.X, self.Xeval)
@@ -139,7 +140,7 @@ class MH_Within_Gibbs_sampler_for_NGP(InferenceModule):
         # Initialise sampling history:
         self.history = [self.parameters | {"mean":mean, 
                                            "cov":cov, 
-                                           "log_marginal_likelihood":log_marginal_likelihood, 
+                                           "log_marginal_likelihood":log_marginal_likelihood[0], 
                                            "t_series":self.model.subordinator.t_series, 
                                            "x_series":self.model.subordinator.x_series
                                           }
@@ -158,15 +159,21 @@ class MH_Within_Gibbs_sampler_for_NGP(InferenceModule):
         
         for proposal_interval in proposal_intervals:
             
-            proposal_t_series, proposal_x_series = self.model.subordinator.propose_subordinator(proposal_interval)
+            # proposal_t_series, proposal_x_series = self.model.subordinator.propose_subordinator(proposal_interval)
+
+            t_series, x_series = self.model.subordinator.get_jumps_outside(proposal_interval[0], proposal_interval[1], self.model.subordinator.t_series, self.model.subordinator.x_series)
+            t_series_extension, x_series_extension = self.model.subordinator.simulate_points(rate=(proposal_interval[1]-proposal_interval[0]), low=proposal_interval[0], high=proposal_interval[1], n_particles=1)
+            proposal_t_series, proposal_x_series = self.model.subordinator.add_jumps(t_series, x_series, t_series_extension, x_series_extension)
+
             proposal_mean, proposal_cov, proposal_log_marginal_likelihood = self.model.proposal_posterior_density(self.y, self.X, self.Xeval, proposal_t_series, proposal_x_series)
 
-            acceptance_prob = np.min([1, np.exp(proposal_log_marginal_likelihood.item() - self.history[-1]["log_marginal_likelihood"].item())])
+            acceptance_prob = np.min([1, np.exp(proposal_log_marginal_likelihood[0].item() - self.history[-1]["log_marginal_likelihood"].item())])
             u = np.random.uniform(low=0.0, high=1.0)
 
             if u < acceptance_prob:
-                self.model.subordinator.set_proposal_samples(proposal_t_series, proposal_x_series)
-                self.history.append(self.parameters | {"mean":proposal_mean, "cov":proposal_cov, "log_marginal_likelihood":proposal_log_marginal_likelihood, "t_series":proposal_t_series, "x_series":proposal_x_series})
+                # self.model.subordinator.set_proposal_samples(proposal_t_series, proposal_x_series)
+                self.model.subordinator.t_series, self.model.subordinator.x_series = proposal_t_series, proposal_x_series
+                self.history.append(self.parameters | {"mean":proposal_mean, "cov":proposal_cov, "log_marginal_likelihood":proposal_log_marginal_likelihood[0], "t_series":proposal_t_series, "x_series":proposal_x_series})
             else:
                 self.history.append(self.history[-1])
 
@@ -183,7 +190,7 @@ class MH_Within_Gibbs_sampler_for_NGP(InferenceModule):
             mean, cov, log_marginal_likelihood = self.model.posterior_density(self.y, self.X, self.Xeval)
 
             # Metropolis-Hastings step:
-            proposal_joint_log_likelihood = log_marginal_likelihood.item() + self.prior[key].log_likelihood(parameter_proposal[key]) + self.proposal[key].log_likelihood(self.parameters[key], parameter_proposal[key])
+            proposal_joint_log_likelihood = log_marginal_likelihood[0].item() + self.prior[key].log_likelihood(parameter_proposal[key]) + self.proposal[key].log_likelihood(self.parameters[key], parameter_proposal[key])
             previous_joint_log_likelihood = self.history[-1]["log_marginal_likelihood"].item() + self.prior[key].log_likelihood(self.history[-1][key]) + self.proposal[key].log_likelihood(parameter_proposal[key], self.parameters[key])
 
             acceptance_prob = np.min([1, np.exp(proposal_joint_log_likelihood - previous_joint_log_likelihood)])
@@ -191,7 +198,7 @@ class MH_Within_Gibbs_sampler_for_NGP(InferenceModule):
 
             if u < acceptance_prob:
                 self.parameters = parameter_proposal
-                self.history.append(self.model.get_parameter_values() | {"mean":mean, "cov":cov, "log_marginal_likelihood":log_marginal_likelihood})
+                self.history.append(self.model.get_parameter_values() | {"mean":mean, "cov":cov, "log_marginal_likelihood":log_marginal_likelihood[0]})
             else:
                 self.model.set_parameter_values(**self.parameters)
                 self.history.append(self.history[-1])

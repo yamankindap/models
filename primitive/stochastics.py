@@ -80,7 +80,7 @@ class LevyProcess(ParameterInterface):
             mask = (s <= t_series[i]) & (t_series[i] <= t)
             t_series_interval.append(t_series[i][mask])
             x_series_interval.append(x_series[i][mask])
-        return t_series, x_series
+        return t_series_interval, x_series_interval
 
     def get_jumps_outside(self, s, t, t_series, x_series):
         """Return t_series and x_series that only contains the jumps outside (s, t).
@@ -91,7 +91,7 @@ class LevyProcess(ParameterInterface):
             mask = (s <= t_series[i]) & (t_series[i] <= t)
             t_series_interval.append(t_series[i][~mask])
             x_series_interval.append(x_series[i][~mask])
-        return t_series, x_series
+        return t_series_interval, x_series_interval
     
     def simulate_jump_times(self, x_series, low, high):
         """Simulate random jump times between 'low' and 'high' given a set of jumps 'x_series'.

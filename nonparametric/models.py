@@ -1,5 +1,5 @@
 import numpy as np
-from primitive.linalg import invert_covariance
+from primitive.linalg import invert_covariance, invert_covariance_1d
 
 # Specific probabilistic model class:
 
@@ -43,7 +43,7 @@ class GaussianProcess:
                      | B.T C |
         Returns the mean vector and covariance matrix for P(x | y).
         """
-        C_inv = invert_covariance(C)
+        C_inv = invert_covariance_1d(C)
 
         mean = a + B @ C_inv @ (y - b)
         cov = A - B @ C_inv @ B.T
@@ -101,10 +101,11 @@ class NonGaussianProcess:
         """
         low = X.min()
         high = X.max()
-        self.subordinator.initialise_proposal_samples(low, high)
+        # self.subordinator.initialise_proposal_samples(low, high)
+        self.subordinator.t_series, self.subordinator.x_series = self.subordinator.simulate_points(rate=(high-low), low=low, high=high, n_particles=1)
         Wx = self.subordinator.stochastic_integral(X, self.subordinator.t_series, self.subordinator.x_series)
 
-        system_cov = self.covariance_function(Wx)
+        system_cov = self.covariance_function(Wx[0])
         fX = np.random.multivariate_normal(mean=self.mean_function(X, ndims=1).flatten(), cov=system_cov, size=size).T
 
         measurement_cov = self.noise_covariance_function(X)
@@ -137,8 +138,8 @@ class NonGaussianProcess:
         mu = self.mean_function(X, ndims=y.shape[1])
         
         # Compute prior covariance matrices:
-        WX = self.subordinator.stochastic_integral(X, self.subordinator.t_series, self.subordinator.x_series)
-        WXeval = self.subordinator.stochastic_integral(Xeval, self.subordinator.t_series, self.subordinator.x_series)
+        WX = self.subordinator.stochastic_integral(X, self.subordinator.t_series, self.subordinator.x_series)[0]
+        WXeval = self.subordinator.stochastic_integral(Xeval, self.subordinator.t_series, self.subordinator.x_series)[0]
 
         SigmaXX = self.covariance_function(WX, WX)
         SigmaXevalX = self.covariance_function(WXeval, WX)
@@ -160,8 +161,8 @@ class NonGaussianProcess:
         mu = self.mean_function(X, ndims=y.shape[1])
         
         # Compute prior covariance matrices:
-        WX = self.subordinator.stochastic_integral(X, t_series, x_series)
-        WXeval = self.subordinator.stochastic_integral(Xeval, t_series, x_series)
+        WX = self.subordinator.stochastic_integral(X, t_series, x_series)[0]
+        WXeval = self.subordinator.stochastic_integral(Xeval, t_series, x_series)[0]
 
         SigmaXX = self.covariance_function(WX, WX)
         SigmaXevalX = self.covariance_function(WXeval, WX)

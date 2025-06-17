@@ -16,6 +16,17 @@ def invert_covariance(cov, alpha=1e-9):
 
     return cov_inv
 
+def invert_covariance_1d(cov, alpha=1e-9):
+    """Inverts a covariance matrix that is not necessarily positive-definite. The alpha parameter is added to the diagonal before invertion.
+    """
+    cov = cov + alpha*np.eye(cov.shape[-2])
+    # Compute the Cholesky decomposition of the covariance matrix
+    L = np.linalg.cholesky(cov)
+    Linv = np.linalg.inv(L)
+    # Invert the upper triangular matrix using backward substitutions
+    cov_inv = Linv.T @ Linv
+
+    return cov_inv
 
 # Parameterised linear algebra operator classes:
 

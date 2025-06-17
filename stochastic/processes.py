@@ -203,8 +203,9 @@ class StableProcess(LevyProcess):
         self.check_parameter_constraints()
 
     def check_parameter_constraints(self):
-        if (self.alpha >= 1):
-            raise ValueError('The alpha parameter is set to greater than or equal to 1.')
+        pass
+        #if (self.alpha >= 1):
+        #    raise ValueError('The alpha parameter is set to greater than or equal to 1.')
 
     def h_stable(self, gamma):
         return np.power((self.alpha/self.C)*gamma, np.divide(-1,self.alpha))
@@ -453,14 +454,12 @@ class TemperedStableProcess(LevyProcess):
         The truncation level is required for making a Gaussian approximation of the residual process.
         """
         x_series, truncation_level = self.simulate_adaptively_truncated_jump_series(rate=rate, size=n_particles)
-        # t_series = np.random.uniform(low=low, high=high, size=x_series.shape)
         t_series = self.simulate_jump_times(x_series, low, high)
 
         residual_t_series, residual_jumps = self.simulate_residual(low=low, high=high, truncation_level=truncation_level, n_realisations=n_particles)
 
         t_series, x_series = self.add_jumps(t_series, x_series, residual_t_series, residual_jumps)
         return t_series, x_series
-        # return np.concatenate((t_series, residual_t_series), axis=1), np.concatenate((x_series, residual_jumps),  axis=1)
 
     # These will be derived in future publications.
     def likelihood(self, x_prime, x):
@@ -990,10 +989,6 @@ class GeneralisedInverseGaussianProcess(LevyProcess):
             u = np.random.uniform(low=0.0, high=1.0, size=x_series[i].size)
             x_series[i] = x_series[i][u < acceptance_prob]
         return gamma_sequence, x_series
-
-
-# Continue from here. Copy the general flow above.
-
 
     def simulate_adaptive_combined_series_setting_2(self, rate=1.0, size=1):
 
